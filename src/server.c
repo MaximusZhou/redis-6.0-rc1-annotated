@@ -1835,6 +1835,11 @@ void checkChildrenDone(void) {
  * a macro is used: run_with_period(milliseconds) { .... }
  */
 
+/* 系统每1000/server.hz ms调用这个接口一次，即一秒调用这个接口server.hz次，
+ * 服务器在启动后，1ms后调用这个接口，
+ * 在这个接口中，做了大量可以异步后台做的工作
+ * 比如，关闭超时的客户端、清除过期的key等工作
+ */
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     UNUSED(eventLoop);
@@ -2265,6 +2270,7 @@ void createSharedObjects(void) {
     shared.maxstring = sdsnew("maxstring");
 }
 
+/*初始化全局结构体server(struct redisServer)，设置结构体成员为默认值*/
 void initServerConfig(void) {
     int j;
 
@@ -2576,6 +2582,8 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
+/* 在配置文件bind（一组ip地址）和port上创建相应的监听套接字，
+ * 并且把结果保存到fds（套接字fd）和count（数量）*/
 int listenToPort(int port, int *fds, int *count) {
     int j;
 
@@ -2587,6 +2595,8 @@ int listenToPort(int port, int *fds, int *count) {
             int unsupported = 0;
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
+			/* 当bindaddr_count 为0，才可能执行以下逻辑，比如当
+			 * 配置文件中，没有配置bind字段的时候，则走下面的的逻辑*/
             fds[*count] = anetTcp6Server(server.neterr,port,NULL,
                 server.tcp_backlog);
             if (fds[*count] != ANET_ERR) {
@@ -2677,6 +2687,7 @@ void resetServerStats(void) {
     server.aof_delayed_fsync = 0;
 }
 
+/*设置信号处理函数、分配各类数据结构、创建监听套接字并加入epoll事件等各类系统初始化逻辑*/
 void initServer(void) {
     int j;
 
@@ -2717,6 +2728,7 @@ void initServer(void) {
 
     createSharedObjects();
     adjustOpenFilesLimit();
+	/* 创建管理事件的结构体struct aeEventLoop*/
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
@@ -2727,6 +2739,7 @@ void initServer(void) {
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
+	/* 根据配置的port，打开监听端口，用于接收客户的连接*/
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
@@ -2811,6 +2824,7 @@ void initServer(void) {
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
+	/* 创建一个定时器，定时调用接口serverCron*/
     if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         serverPanic("Can't create event loop timers.");
         exit(1);
@@ -2818,6 +2832,7 @@ void initServer(void) {
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
+	/* 把监听套接字加到事件epoll中，即读事件加入到epoll中，看是否有新的连接到来 */
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -2880,6 +2895,7 @@ void initServer(void) {
  * Specifically, creation of threads due to a race bug in ld.so, in which
  * Thread Local Storage initialization collides with dlopen call.
  * see: https://sourceware.org/bugzilla/show_bug.cgi?id=19329 */
+/*初始化各类线程，在服务器初始化最后的位置调用*/
 void InitServerLast() {
     bioInit();
     initThreadedIO();
@@ -4721,6 +4737,7 @@ int checkForSentinelMode(int argc, char **argv) {
 }
 
 /* Function called at startup to load RDB or AOF file in memory. */
+/* 在服务器启动的时候调用 */
 void loadDataFromDisk(void) {
     long long start = ustime();
     if (server.aof_state == AOF_ON) {
@@ -4871,6 +4888,7 @@ int main(int argc, char **argv) {
 
     /* We need to initialize our libraries, and the server configuration. */
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
+	/* 进程环境设置 */
     spt_init(argc, argv);
 #endif
     setlocale(LC_COLLATE,"");
@@ -4883,6 +4901,7 @@ int main(int argc, char **argv) {
     getRandomBytes(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+	/*初始化全局结构体server(struct redisServer)，设置结构体成员为默认值*/
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
@@ -4974,6 +4993,7 @@ int main(int argc, char **argv) {
             exit(1);
         }
         resetServerSaveParams();
+		/* 从配置文件中读取相关配置，比如redis.conf*/
         loadServerConfig(configfile,options);
         sdsfree(options);
     }
@@ -4997,6 +5017,7 @@ int main(int argc, char **argv) {
     int background = server.daemonize && !server.supervised;
     if (background) daemonize();
 
+	/*设置信号处理函数、分配各类数据结构、创建监听套接字*/
     initServer();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
@@ -5009,8 +5030,10 @@ int main(int argc, char **argv) {
     #ifdef __linux__
         linuxMemoryWarnings();
     #endif
+		/*加载so文件，即配置文件中loadmod字段*/
         moduleLoadFromQueue();
         ACLLoadUsersAtStartup();
+		/*初始化各类线程，在服务器初始化最后的位置调用*/
         InitServerLast();
         loadDataFromDisk();
         if (server.cluster_enabled) {
@@ -5043,8 +5066,11 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
 
+	/*函数beforeSleep在每次调用等待事件的接口前调用，即poll接口前*/
     aeSetBeforeSleepProc(server.el,beforeSleep);
+	/*函数afterSleep在有事件触发后马上调用，并且事件处理前调用，即poll接口返回后*/
     aeSetAfterSleepProc(server.el,afterSleep);
+	/*进入主循环，等待事件*/
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;

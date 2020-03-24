@@ -476,6 +476,7 @@ static int anetV6Only(char *err, int s) {
     return ANET_OK;
 }
 
+/* 在指定的地址和端口上创建监听套接字*/
 static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backlog)
 {
     int s = -1, rv;
