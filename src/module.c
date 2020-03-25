@@ -7133,6 +7133,7 @@ int moduleRegisterApi(const char *funcname, void *funcptr) {
 /* Global initialization at Redis startup. */
 void moduleRegisterCoreAPI(void);
 
+/* 在系统启动的时候main函数里调用 */
 void moduleInitModulesSystem(void) {
     moduleUnblockedClients = listCreate();
     server.loadmodule_queue = listCreate();
@@ -7179,6 +7180,7 @@ void moduleInitModulesSystem(void) {
  * modules is not considered sane: clients may rely on the existence of
  * given commands, loading AOF also may need some modules to exist, and
  * if this instance is a slave, it must understand commands from master. */
+/* 加载so文件，即配置文件中loadmod字段，在服务器初始化的时候调用 */
 void moduleLoadFromQueue(void) {
     listIter li;
     listNode *ln;

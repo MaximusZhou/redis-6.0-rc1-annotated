@@ -141,6 +141,7 @@ off_t process(FILE *fp) {
     return pos;
 }
 
+/* 启动redis时候，如果带 redis-echeck-aof 选项，则在main函数调用这个接口 */
 int redis_check_aof_main(int argc, char **argv) {
     char *filename;
     int fix = 0;

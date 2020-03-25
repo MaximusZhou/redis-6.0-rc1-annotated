@@ -467,12 +467,14 @@ struct redisCommand sentinelcmds[] = {
 
 /* This function overwrites a few normal Redis config default with Sentinel
  * specific defaults. */
+/* 在main函数调用 */
 void initSentinelConfig(void) {
     server.port = REDIS_SENTINEL_PORT;
     server.protected_mode = 0; /* Sentinel must be exposed. */
 }
 
 /* Perform the Sentinel mode initialization. */
+/* 在main函数调用 */
 void initSentinel(void) {
     unsigned int j;
 

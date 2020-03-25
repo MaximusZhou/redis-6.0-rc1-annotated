@@ -2708,6 +2708,7 @@ void *IOThreadMain(void *myid) {
 }
 
 /* Initialize the data structures needed for threaded I/O. */
+/* 创建网络IO线程，在服务器初始化的时候调用 */
 void initThreadedIO(void) {
     io_threads_active = 0; /* We start with threads not active. */
 

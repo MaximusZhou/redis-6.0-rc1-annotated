@@ -427,6 +427,7 @@ void clusterUpdateMyselfFlags(void) {
     }
 }
 
+/* 服务器初始化的时候调用 */
 void clusterInit(void) {
     int saveconf = 0;
 

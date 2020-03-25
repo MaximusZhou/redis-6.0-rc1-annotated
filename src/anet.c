@@ -525,6 +525,7 @@ int anetTcp6Server(char *err, int port, char *bindaddr, int backlog)
     return _anetTcpServer(err, port, bindaddr, AF_INET6, backlog);
 }
 
+/* 创建unix域套接字，如果配置文件有指定的话，在服务器启动初始化的时候调用 */
 int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
 {
     int s;

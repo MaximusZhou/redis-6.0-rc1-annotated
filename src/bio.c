@@ -93,6 +93,7 @@ void lazyfreeFreeSlotsMapFromBioThread(zskiplist *sl);
 #define REDIS_THREAD_STACK_SIZE (1024*1024*4)
 
 /* Initialize the background system, spawning the thread. */
+/* 初始化后台系统和创建后台线程，在服务器初始化的时候调用 */
 void bioInit(void) {
     pthread_attr_t attr;
     pthread_t thread;

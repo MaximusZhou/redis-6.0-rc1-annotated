@@ -343,6 +343,7 @@ err:
  * status code according to success (RDB is sane) or error (RDB is corrupted).
  * Otherwise if called with a non NULL fp, the function returns C_OK or
  * C_ERR depending on the success or failure. */
+/* 启动redis时候，如果带 redis-echeck-rdb 选项，则在main函数调用这个接口 */
 int redis_check_rdb_main(int argc, char **argv, FILE *fp) {
     if (argc != 2 && fp == NULL) {
         fprintf(stderr, "Usage: %s <rdb-file-name>\n", argv[0]);

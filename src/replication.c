@@ -2724,6 +2724,7 @@ void refreshGoodSlavesCount(void) {
  */
 
 /* Initialize the script cache, only called at startup. */
+/* 服务器初始化时候调用 */
 void replicationScriptCacheInit(void) {
     server.repl_scriptcache_size = 10000;
     server.repl_scriptcache_dict = dictCreate(&replScriptCacheDictType,NULL);

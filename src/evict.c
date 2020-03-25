@@ -136,6 +136,7 @@ unsigned long long estimateObjectIdleTime(robj *o) {
  * evicted in the whole database. */
 
 /* Create a new eviction pool. */
+/* 在redis启动时候，初始化服务器时候调用*/
 void evictionPoolAlloc(void) {
     struct evictionPoolEntry *ep;
     int j;

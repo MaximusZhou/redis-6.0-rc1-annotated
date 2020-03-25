@@ -1756,7 +1756,9 @@ void updateCachedTime(int update_daylight_info) {
         struct tm tm;
         time_t ut = server.unixtime;
         localtime_r(&ut,&tm);
-        server.daylight_active = tm.tm_isdst;
+
+		/* 是否使用夏令时，大于0表示是 等于0表示不是，小于0表示不确定 */
+        server.daylight_active = tm.tm_isdst;  
     }
 }
 
@@ -2155,6 +2157,7 @@ void afterSleep(struct aeEventLoop *eventLoop) {
 
 /* =========================== Server initialization ======================== */
 
+/* redis启动的时候调用 创建各类共享的数据结构，并且通过全局变量shared来保存的 */
 void createSharedObjects(void) {
     int j;
 
@@ -2270,7 +2273,7 @@ void createSharedObjects(void) {
     shared.maxstring = sdsnew("maxstring");
 }
 
-/*初始化全局结构体server(struct redisServer)，设置结构体成员为默认值*/
+/* 初始化全局结构体server(struct redisServer)，设置结构体成员为默认值 */
 void initServerConfig(void) {
     int j;
 
@@ -2472,6 +2475,8 @@ int restartServer(int flags, mstime_t delay) {
  * If it will not be possible to set the limit accordingly to the configured
  * max number of clients, the function will do the reverse setting
  * server.maxclients to the value that we can actually handle. */
+/* redis启动的时候调用，根据配置文件获得redis需要文件描述符数目，然后与系统当前配置进行比较，
+ * 如果系统配置小于需要的文件描述符数目，则尝试修改系统的配置 */
 void adjustOpenFilesLimit(void) {
     rlim_t maxfiles = server.maxclients+CONFIG_MIN_RESERVED_FDS;
     struct rlimit limit;
@@ -2687,7 +2692,7 @@ void resetServerStats(void) {
     server.aof_delayed_fsync = 0;
 }
 
-/*设置信号处理函数、分配各类数据结构、创建监听套接字并加入epoll事件等各类系统初始化逻辑*/
+/* 设置信号处理函数、分配各类数据结构、创建监听套接字并加入epoll事件等各类系统初始化逻辑 */
 void initServer(void) {
     int j;
 
@@ -2719,7 +2724,7 @@ void initServer(void) {
     server.clients_waiting_acks = listCreate();
     server.get_ack_from_slaves = 0;
     server.clients_paused = 0;
-    server.system_memory_size = zmalloc_get_memory_size();
+    server.system_memory_size = zmalloc_get_memory_size(); /* 获取机器的物理内存大小 */
 
     if (server.tls_port && tlsConfigure(&server.tls_ctx_config) == C_ERR) {
         serverLog(LL_WARNING, "Failed to configure TLS. Check logs for more info.");
@@ -2895,7 +2900,7 @@ void initServer(void) {
  * Specifically, creation of threads due to a race bug in ld.so, in which
  * Thread Local Storage initialization collides with dlopen call.
  * see: https://sourceware.org/bugzilla/show_bug.cgi?id=19329 */
-/*初始化各类线程，在服务器初始化最后的位置调用*/
+/* 初始化各类线程，在服务器初始化最后的位置调用 */
 void InitServerLast() {
     bioInit();
     initThreadedIO();
@@ -4533,6 +4538,7 @@ void createPidFile(void) {
     }
 }
 
+/* 让redis后台程序方式运行，在mian中调用 */
 void daemonize(void) {
     int fd;
 
@@ -4645,6 +4651,7 @@ static void sigShutdownHandler(int sig) {
     server.shutdown_asap = 1;
 }
 
+/* 设置redis各类信号处理函数，在服务器启动的时候调用 */
 void setupSignalHandlers(void) {
     struct sigaction act;
 
@@ -4737,7 +4744,7 @@ int checkForSentinelMode(int argc, char **argv) {
 }
 
 /* Function called at startup to load RDB or AOF file in memory. */
-/* 在服务器启动的时候调用 */
+/* 把RDB或者AOF文件加载到内存，在服务器启动的时候调用 */
 void loadDataFromDisk(void) {
     long long start = ustime();
     if (server.aof_state == AOF_ON) {
@@ -4891,16 +4898,16 @@ int main(int argc, char **argv) {
 	/* 进程环境设置 */
     spt_init(argc, argv);
 #endif
-    setlocale(LC_COLLATE,"");
+    setlocale(LC_COLLATE,"");  /* 字符编码相关，有本地环境变量默认值 */
     tzset(); /* Populates 'timezone' global. */
-    zmalloc_set_oom_handler(redisOutOfMemoryHandler);
+    zmalloc_set_oom_handler(redisOutOfMemoryHandler);  /* 设置oom的回调函数 */
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
 
     uint8_t hashseed[16];
     getRandomBytes(hashseed,sizeof(hashseed));
-    dictSetHashFunctionSeed(hashseed);
-    server.sentinel_mode = checkForSentinelMode(argc,argv);
+    dictSetHashFunctionSeed(hashseed); /* 设置dict的hash种子 */
+    server.sentinel_mode = checkForSentinelMode(argc,argv); /* 如果以settinel模式启动，则返回1 */
 	/*初始化全局结构体server(struct redisServer)，设置结构体成员为默认值*/
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
@@ -4932,6 +4939,7 @@ int main(int argc, char **argv) {
         redis_check_aof_main(argc,argv);
 
     if (argc >= 2) {
+		/* 处理redis启动的时候各种选项 */
         j = 1; /* First option to parse in argv[] */
         sds options = sdsempty();
         char *configfile = NULL;
@@ -5020,7 +5028,7 @@ int main(int argc, char **argv) {
 	/*设置信号处理函数、分配各类数据结构、创建监听套接字*/
     initServer();
     if (background || server.pidfile) createPidFile();
-    redisSetProcTitle(argv[0]);
+    redisSetProcTitle(argv[0]); /* 设置进程名字 */
     redisAsciiArt();
     checkTcpBacklogSettings();
 
@@ -5030,10 +5038,10 @@ int main(int argc, char **argv) {
     #ifdef __linux__
         linuxMemoryWarnings();
     #endif
-		/*加载so文件，即配置文件中loadmod字段*/
+		/* 加载so文件，即配置文件中loadmod字段 */
         moduleLoadFromQueue();
         ACLLoadUsersAtStartup();
-		/*初始化各类线程，在服务器初始化最后的位置调用*/
+		/* 初始化各类线程，在服务器初始化最后的位置调用 */
         InitServerLast();
         loadDataFromDisk();
         if (server.cluster_enabled) {
@@ -5066,11 +5074,11 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
 
-	/*函数beforeSleep在每次调用等待事件的接口前调用，即poll接口前*/
+	/* 函数beforeSleep在每次调用等待事件的接口前调用，即poll接口前 */
     aeSetBeforeSleepProc(server.el,beforeSleep);
-	/*函数afterSleep在有事件触发后马上调用，并且事件处理前调用，即poll接口返回后*/
+	/* 函数afterSleep在有事件触发后马上调用，并且事件处理前调用，即poll接口返回后 */
     aeSetAfterSleepProc(server.el,afterSleep);
-	/*进入主循环，等待事件*/
+	/* 进入主循环，等待事件 */
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;
