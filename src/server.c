@@ -3593,6 +3593,7 @@ void closeListeningSockets(int unlink_unix_socket) {
     }
 }
 
+/* 不管是通过客户端SHUDOWN命令关闭redis，还是通过发送信号关闭redis，最后都调用这个接口 */
 int prepareForShutdown(int flags) {
     int save = flags & SHUTDOWN_SAVE;
     int nosave = flags & SHUTDOWN_NOSAVE;
@@ -3618,6 +3619,7 @@ int prepareForShutdown(int flags) {
         TerminateModuleForkChild(server.module_child_pid,0);
     }
 
+	/* 如果开启了AOF模式，则把相关的数据都刷到磁盘上 */
     if (server.aof_state != AOF_OFF) {
         /* Kill the AOF saving child as the AOF we already have may be longer
          * but contains the full dataset anyway. */
@@ -3634,11 +3636,13 @@ int prepareForShutdown(int flags) {
         }
         /* Append only file: flush buffers and fsync() the AOF at exit */
         serverLog(LL_NOTICE,"Calling fsync() on the AOF file.");
+		/* 刷buff中数据强制刷到磁盘上 */
         flushAppendOnlyFile(1);
         redis_fsync(server.aof_fd);
     }
 
     /* Create a new RDB file before exiting. */
+	/* 根据传入参数，来决定是否要创建一个新的db快照 */
     if ((server.saveparamslen > 0 && !nosave) || save) {
         serverLog(LL_NOTICE,"Saving the final RDB snapshot before exiting.");
         if (server.supervised_mode == SUPERVISED_SYSTEMD)
@@ -3670,9 +3674,11 @@ int prepareForShutdown(int flags) {
 
     /* Best effort flush of slave output buffers, so that we hopefully
      * send them pending writes. */
+	/* 尽可能把slave中buff数据刷到磁盘上 */
     flushSlavesOutputBuffers();
 
     /* Close the listening sockets. Apparently this allows faster restarts. */
+	/* 关闭所有的监听套接字 */
     closeListeningSockets(1);
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
         server.sentinel_mode ? "Sentinel" : "Redis");

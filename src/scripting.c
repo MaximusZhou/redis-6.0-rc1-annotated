@@ -1952,6 +1952,7 @@ int ldbPendingChildren(void) {
 }
 
 /* Kill all the forked sessions. */
+/* 在接口prepareForShutdown中调用，即关闭redis服务器的时候调用*/
 void ldbKillForkedSessions(void) {
     listIter li;
     listNode *ln;

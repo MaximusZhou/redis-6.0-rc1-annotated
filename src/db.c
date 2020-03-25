@@ -913,9 +913,11 @@ void typeCommand(client *c) {
     addReplyStatus(c, getObjectTypeName(o));
 }
 
+/* redis 客户端执行命令SHUTDOWN对应的逻辑 */
 void shutdownCommand(client *c) {
     int flags = 0;
 
+	/* 根据客户端传入不同的参数，设置flags */
     if (c->argc > 2) {
         addReply(c,shared.syntaxerr);
         return;
@@ -935,6 +937,7 @@ void shutdownCommand(client *c) {
      * with half-read data).
      *
      * Also when in Sentinel mode clear the SAVE flag and force NOSAVE. */
+	/* 正在从磁盘读数据，或者是哨兵模式，则应该以SHUTDOWN_NOSAVE模式关服 */
     if (server.loading || server.sentinel_mode)
         flags = (flags & ~SHUTDOWN_SAVE) | SHUTDOWN_NOSAVE;
     if (prepareForShutdown(flags) == C_OK) exit(0);

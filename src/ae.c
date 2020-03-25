@@ -60,7 +60,7 @@
     #endif
 #endif
 
-/* 创建管理事件的结构体aeEventLoop, 在服务器启动的时候会调用，并把返回值保存到serve.el中 */
+/* 创建管理事件的结构体aeEventLoop, 在服务器启动的时候会调用，并把返回值保存到server.el中 */
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
