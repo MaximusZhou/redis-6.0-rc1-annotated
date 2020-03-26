@@ -30,6 +30,10 @@
 #ifndef __CONFIG_H
 #define __CONFIG_H
 
+/*
+ * 下面的__linux__、__APPLE__等系统宏都是gcc预定义的
+*/
+
 #ifdef __APPLE__
 #include <AvailabilityMacros.h>
 #endif

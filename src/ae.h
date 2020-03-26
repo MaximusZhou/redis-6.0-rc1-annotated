@@ -70,9 +70,9 @@ typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 /* File event structure */
 typedef struct aeFileEvent {
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
-    aeFileProc *rfileProc;
-    aeFileProc *wfileProc;
-    void *clientData;
+    aeFileProc *rfileProc; /* 触发可读事件时候，执行的回调函数 */
+    aeFileProc *wfileProc; /* 触发可写事件时候，执行的回调函数 */
+    void *clientData; /* 读写事件会执行回调函数的时候，都是用这个数据作为参数，公用的 */
 } aeFileEvent;
 
 /* Time event structure */

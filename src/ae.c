@@ -46,6 +46,10 @@
 
 /* Include the best multiplexing layer supported by this system.
  * The following should be ordered by performances, descending. */
+/* 通过include不同的.c文件，来做到跨平台，每个.c文件提供相同的接口签名，方便使用
+ * 并且按效率从高到底判断使用的, HAVE_EVPORT、HAVE_EPOLL和HAVE_KQUEUE这些宏根据不同平台
+ * 在config.h中定义的
+ * */
 #ifdef HAVE_EVPORT
 #include "ae_evport.c"
 #else
@@ -60,7 +64,8 @@
     #endif
 #endif
 
-/* 创建管理事件的结构体aeEventLoop, 在服务器启动的时候会调用，并把返回值保存到server.el中 */
+/* 创建管理事件的结构体aeEventLoop, 在服务器启动的时候会调用，并把返回值保存到server.el中,
+ * 传入的参数setsize大小为，配置的最大客户端连接数 + CONFIG_FDSET_INCR */
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
@@ -114,6 +119,10 @@ void aeSetDontWait(aeEventLoop *eventLoop, int noWait) {
  * performed at all.
  *
  * Otherwise AE_OK is returned and the operation is successful. */
+/*
+ * 增大或者缩小事件集合的大小，当然缩小的时候，发现当前最大的fd大于等于目标setsiz值的时候，
+ * 会缩小失败，maxfd的大小要永远小于setsize的大小的
+ */
 int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
     int i;
 
@@ -143,7 +152,10 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
-/* 把套接字fd要监控的动作mask加入到epoll事件中 */
+/* 把套接字fd要监控的动作mask加入到epoll事件中,
+ * 参数mask可以是类似AE_READABLE等值,
+ * 参数proc是触发相应事件时候的回调函数，
+ * clientData执行回调函数时候相应的参数*/
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
@@ -164,6 +176,7 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     return AE_OK;
 }
 
+/* 取消对某个动作的监控 */
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
 {
     if (fd >= eventLoop->setsize) return;
@@ -172,6 +185,7 @@ void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
 
     /* We want to always remove AE_BARRIER if set when AE_WRITABLE
      * is removed. */
+	/* 在移除AE_WRITABLE监控的时候，会一定移除AE_BARRIER的 */
     if (mask & AE_WRITABLE) mask |= AE_BARRIER;
 
     aeApiDelEvent(eventLoop, fd, mask);
@@ -180,12 +194,14 @@ void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
         /* Update the max fd */
         int j;
 
+		/* 查找有监控动作，即不为AE_NONE的，最大的maxfd */
         for (j = eventLoop->maxfd-1; j >= 0; j--)
             if (eventLoop->events[j].mask != AE_NONE) break;
         eventLoop->maxfd = j;
     }
 }
 
+/* 返回监控的事件 */
 int aeGetFileEvents(aeEventLoop *eventLoop, int fd) {
     if (fd >= eventLoop->setsize) return 0;
     aeFileEvent *fe = &eventLoop->events[fd];
@@ -202,6 +218,7 @@ static void aeGetTime(long *seconds, long *milliseconds)
     *milliseconds = tv.tv_usec/1000;
 }
 
+/* 计算当前时间加上milliseconds的后，对应的秒数和毫秒数 */
 static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) {
     long cur_sec, cur_ms, when_sec, when_ms;
 

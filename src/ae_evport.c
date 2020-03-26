@@ -27,6 +27,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * Illumos是因应OpenSolaris开源社区中止而打开的项目(sun被收购了),
+ * Illumos项目的主要目标是成为一个完全开源的、自立的、与Solaris完全兼容的SunOS衍生版,
+ * 首发时间是2010
+*/
+
 
 #include <assert.h>
 #include <errno.h>
