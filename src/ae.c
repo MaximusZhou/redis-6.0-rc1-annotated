@@ -233,7 +233,9 @@ static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) 
     *ms = when_ms;
 }
 
-/* 创建一个定时器，定时调用接口proc */
+/* 创建一个定时器，参数milliseconds是等待时间，proc 将要执行的函数,
+ * proc的返回值，若为AE_NOMORE，表示proc不再执行了，否则返回的值作为下次执行要等待的时间，
+ * finalizerProc删除定时器执行的函数，这个proc不再执行了，比如用来回收clientData相关的内存 */
 long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
         aeTimeProc *proc, void *clientData,
         aeEventFinalizerProc *finalizerProc)
@@ -248,12 +250,13 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
+	/* 放到双向连接头部，redis这个定时器实现有点简陋了。。*/
     te->prev = NULL;
     te->next = eventLoop->timeEventHead;
     if (te->next)
         te->next->prev = te;
     eventLoop->timeEventHead = te;
-    return id;
+    return id; /* 返回每个定时的唯一标识 */
 }
 
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
@@ -280,6 +283,12 @@ int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
  *    Much better but still insertion or deletion of timers is O(N).
  * 2) Use a skiplist to have this operation as O(1) and insertion as O(log(N)).
  */
+
+/*
+* 查找离当前最近的一个将要执行的定时器，线性查找的，按注释，现在没有优化的必要，
+* 如果需要的话，可以保证有序，或者使用skiplist数据结构
+*/
+
 static aeTimeEvent *aeSearchNearestTimer(aeEventLoop *eventLoop)
 {
     aeTimeEvent *te = eventLoop->timeEventHead;
@@ -384,6 +393,14 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * if flags has AE_CALL_AFTER_SLEEP set, the aftersleep callback is called.
  *
  * The function returns the number of events processed. */
+/*
+ * 事件主循环调用的函数，注意在处理事件的中间，可能注册time事件
+ *
+ *
+ *
+ * AE_CALL_AFTER_SLEEP 作用是用来每次标识，是在主循环中调用这个接口，当有事件触发生的时候，
+ * 需要马上调用aftersleep函数，这个函数等待函数返回后，马上执行的
+*/
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
@@ -404,6 +421,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))
             shortest = aeSearchNearestTimer(eventLoop);
         if (shortest) {
+			/* 计算time事件，最少要等待的时间 */
             long now_sec, now_ms;
 
             aeGetTime(&now_sec, &now_ms);
@@ -427,14 +445,17 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * ASAP because of AE_DONT_WAIT we need to set the timeout
              * to zero */
             if (flags & AE_DONT_WAIT) {
+				/* 有AE_DONT_WAIT标识，相当于有一个timeout为0的time事件了 */
                 tv.tv_sec = tv.tv_usec = 0;
                 tvp = &tv;
             } else {
                 /* Otherwise we can block */
+				/* 表示没有timer事件 */
                 tvp = NULL; /* wait forever */
             }
         }
 
+		/* eventLoop有AE_DONT_WAIT标识，效果一样，相当于有一个timeout为0的time事件了 */
         if (eventLoop->flags & AE_DONT_WAIT) {
             tv.tv_sec = tv.tv_usec = 0;
             tvp = &tv;

@@ -53,8 +53,8 @@
 #define AE_DONT_WAIT 4
 #define AE_CALL_AFTER_SLEEP 8
 
-#define AE_NOMORE -1
-#define AE_DELETED_EVENT_ID -1
+#define AE_NOMORE -1 /* 定时器回调函数，返回这个值，表示这个定时不再执行，将要删除 */
+#define AE_DELETED_EVENT_ID -1 /* 设置定时器id为待删除的值 */
 
 /* Macros */
 #define AE_NOTUSED(V) ((void) V)
@@ -102,7 +102,7 @@ typedef struct aeEventLoop {
     aeFileEvent *events; /* Registered events */
     aeFiredEvent *fired; /* Fired events */
     aeTimeEvent *timeEventHead;
-    int stop;
+    int stop; /* 这个值通常是0，只是压测的时候，主动关闭事件循环，设置为1 */
     void *apidata; /* This is used for polling API specific data */
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;

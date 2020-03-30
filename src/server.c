@@ -2084,6 +2084,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 /* This function gets called every time Redis is entering the
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors. */
+/*
+ * 在每次进入事件等待的操作前，调用这个接口
+ */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
 
@@ -2149,6 +2152,10 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 /* This function is called immadiately after the event loop multiplexing
  * API returned, and the control is going to soon return to Redis by invoking
  * the different events callbacks. */
+/*
+ * 在主循环调用aeProcessEvents时，多路复用接口返回时候，马上调用，
+ * 在处理所有的事件就调用了
+ */
 void afterSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
     if (moduleCount()) moduleAcquireGIL();
