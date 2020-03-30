@@ -70,6 +70,7 @@ static void aeApiFree(aeEventLoop *eventLoop) {
     zfree(state);
 }
 
+/* 增加对fd，mask事件的监控 */
 static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
     aeApiState *state = eventLoop->apidata;
     struct epoll_event ee = {0}; /* avoid valgrind warning */
@@ -80,7 +81,7 @@ static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
 
     ee.events = 0;
     mask |= eventLoop->events[fd].mask; /* Merge old events */
-    if (mask & AE_READABLE) ee.events |= EPOLLIN;
+    if (mask & AE_READABLE) ee.events |= EPOLLIN; /* 转换为跟具体平台相关的宏 */
     if (mask & AE_WRITABLE) ee.events |= EPOLLOUT;
     ee.data.fd = fd;
     if (epoll_ctl(state->epfd,op,fd,&ee) == -1) return -1;
@@ -110,7 +111,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
     int retval, numevents = 0;
 
     retval = epoll_wait(state->epfd,state->events,eventLoop->setsize,
-            tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1);
+            tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1); /* -1 表示永远不超时 */
     if (retval > 0) {
         int j;
 
@@ -119,6 +120,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
             int mask = 0;
             struct epoll_event *e = state->events+j;
 
+			/* 平台相关的宏转换为通用的宏 */
             if (e->events & EPOLLIN) mask |= AE_READABLE;
             if (e->events & EPOLLOUT) mask |= AE_WRITABLE;
             if (e->events & EPOLLERR) mask |= AE_WRITABLE|AE_READABLE;

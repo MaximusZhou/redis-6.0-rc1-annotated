@@ -30,6 +30,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * 跨平台的，事件循环管理模块
+ */
+
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -319,6 +323,9 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
      * events to be processed ASAP when this happens: the idea is that
      * processing events earlier is less dangerous than delaying them
      * indefinitely, and practice suggests it is. */
+	/*
+	 * 处理系统时间可能被修改的情况，即时间往回调整了，把所有的时间事件，设置为马上可以执行
+	 * */
     if (now < eventLoop->lastTime) {
         te = eventLoop->timeEventHead;
         while(te) {
@@ -330,11 +337,15 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 
     te = eventLoop->timeEventHead;
     maxId = eventLoop->timeEventNextId-1;
+	/* 实质是遍历定时器里面每一个定时器的，然后检测器是否timeout，可以处理了 */
     while(te) {
         long now_sec, now_ms;
         long long id;
 
         /* Remove events scheduled for deletion. */
+		/* 
+		 * 要被删除的定时器，从链表中删除，并执行器注册的finalizerProc函数
+		 */
         if (te->id == AE_DELETED_EVENT_ID) {
             aeTimeEvent *next = te->next;
             if (te->prev)
@@ -355,6 +366,12 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
          * add new timers on the head, however if we change the implementation
          * detail, this check may be useful again: we keep it here for future
          * defense. */
+		/*
+		 * 在处理timer事件的时候，可能会产生新的timer事件，在本次迭代中，
+		 * 不处理这些新创建的事件，当前实现，这个判断是无效的，
+		 * 因为新创建的timer事件永远放在链表开头部分，本while循环
+		 * 永远取不到新创建的timer事件
+		 * */
         if (te->id > maxId) {
             te = te->next;
             continue;
@@ -369,8 +386,10 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
             retval = te->timeProc(eventLoop, id, te->clientData);
             processed++;
             if (retval != AE_NOMORE) {
+				/* 返回值表示下一次执行还需要等待多长时间 */
                 aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
             } else {
+				/* AE_NOMORE 表示该定时器等待清除 */
                 te->id = AE_DELETED_EVENT_ID;
             }
         }
@@ -395,25 +414,33 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * The function returns the number of events processed. */
 /*
  * 事件主循环调用的函数，注意在处理事件的中间，可能注册time事件
- *
- *
- *
+ * AE_DONT_WAIT 用来让函数aeProcessEvents尽可能快速返回，不用等待事件发生，
+ * 其实现方式把最近一个timer事件的timeout设置0，然其监控事件的接口无需等待，马上返回
  * AE_CALL_AFTER_SLEEP 作用是用来每次标识，是在主循环中调用这个接口，当有事件触发生的时候，
- * 需要马上调用aftersleep函数，这个函数等待函数返回后，马上执行的
+ * 需要马上调用aftersleep函数，这个函数在事件等待函数返回后，马上执行的
 */
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
 
     /* Nothing to do? return ASAP */
+	/* 传入的flags 即不是事件事件，也是不是文件事件，则直接返回 */
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
 
     /* Note that we want call select() even if there are no
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
+	/*  有文件事件要监控处理，或者
+	 * flags有timer事件，并且flags不包括AE_DONT_WAIT标记，则进入相应的逻辑
+	 * */
     if (eventLoop->maxfd != -1 ||
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+
+		/*
+		 * 计算时间事件，要等待的时间，即将要发生的最近的一个时间事件，
+		 * 如果设置了AE_DONT_WAIT标识，则设置时间事件的timeout为0
+		*/
         int j;
         aeTimeEvent *shortest = NULL;
         struct timeval tv, *tvp;
@@ -450,7 +477,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 tvp = &tv;
             } else {
                 /* Otherwise we can block */
-				/* 表示没有timer事件 */
+				/* 表示没有timer事件，并且flags没设置AE_DONT_WAIT标识 */
                 tvp = NULL; /* wait forever */
             }
         }
@@ -463,6 +490,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
+		 /* 调用多路复用API，有文件事件或者时间事件发生的时候，则返回 */
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
@@ -473,6 +501,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
             int mask = eventLoop->fired[j].mask;
             int fd = eventLoop->fired[j].fd;
+			/* 当前fd发生的事件数目 */
             int fired = 0; /* Number of events fired for current fd. */
 
             /* Normally we execute the readable event first, and the writable
@@ -486,6 +515,14 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * This is useful when, for instance, we want to do things
              * in the beforeSleep() hook, like fsynching a file to disk,
              * before replying to a client. */
+			/*
+			 * 通常处理方式，先处理可读事件，然后处理可写事件，这样可以做到收到某一个客户端请求后，
+			 * 马上处理请求，然后马上返回给客户端
+			 *
+			 * 然后，如果设置了AE_BARRIER，则反过来，要求写出来写事件，然后处理读事件，
+			 * 这种情况也是非常有用，比如我们想在beforeSleep中同步文件到磁盘中，然后才回复客户端，
+			 * 即要求才回复客户端之前，把数据写到磁盘上
+			 */
             int invert = fe->mask & AE_BARRIER;
 
             /* Note the "fe->mask & mask & ..." code: maybe an already
@@ -494,6 +531,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              *
              * Fire the readable event if the call sequence is not
              * inverted. */
+			/* fe->mask & mask 这样再做一次校验，原因是其他事件处理逻辑中，
+			 * 可能删除了本轮回已经fired事件的监控 */
             if (!invert && fe->mask & mask & AE_READABLE) {
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
                 fired++;
@@ -523,6 +562,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
 
+	/* 返回处理的文件事件和时间事件的总数，注意一个fd算一次，即使这个fd可能同时都有读写事件 */
     return processed; /* return the number of processed file/time events */
 }
 

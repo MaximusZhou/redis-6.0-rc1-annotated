@@ -41,6 +41,7 @@
 #define AE_NONE 0       /* No events registered. */
 #define AE_READABLE 1   /* Fire when descriptor is readable. */
 #define AE_WRITABLE 2   /* Fire when descriptor is writable. */
+/* AE_BARRIER用在回复客户端之前，要求把数据存入磁盘中，即先处理写事件，然后再处理读事件*/
 #define AE_BARRIER 4    /* With WRITABLE, never fire the event if the
                            READABLE event already fired in the same event
                            loop iteration. Useful when you want to persist
@@ -68,6 +69,7 @@ typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientDat
 typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 
 /* File event structure */
+/* 每个文件事件，用这个结构体来表示，用预分配数组的方式，即成员aeEventLoop.events */
 typedef struct aeFileEvent {
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
     aeFileProc *rfileProc; /* 触发可读事件时候，执行的回调函数 */
@@ -76,6 +78,7 @@ typedef struct aeFileEvent {
 } aeFileEvent;
 
 /* Time event structure */
+/* 每个时间事件，用这个结构体来表示，用双链表来组织，链表指针为timeEventHead */
 typedef struct aeTimeEvent {
     long long id; /* time event identifier. */
     long when_sec; /* seconds */
@@ -97,12 +100,15 @@ typedef struct aeFiredEvent {
 typedef struct aeEventLoop {
     int maxfd;   /* highest file descriptor currently registered */
     int setsize; /* max number of file descriptors tracked */
-    long long timeEventNextId;
+    long long timeEventNextId; /* 每注册一个时间事件，这个值增加1 */
+	/* 最近一次处理时间事件的时间，用于调整系统时间的情况 */
     time_t lastTime;     /* Used to detect system clock skew */
     aeFileEvent *events; /* Registered events */
+	/* 当多路复用接口返回时，fired保存发生的事件 */
     aeFiredEvent *fired; /* Fired events */
-    aeTimeEvent *timeEventHead;
+    aeTimeEvent *timeEventHead; /* 时间事件链表的头结点 */
     int stop; /* 这个值通常是0，只是压测的时候，主动关闭事件循环，设置为1 */
+	/* apidata 跟具体的平台有关，每个平台指向的数据是不一样的 */
     void *apidata; /* This is used for polling API specific data */
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
