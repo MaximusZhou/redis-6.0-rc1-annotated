@@ -74,16 +74,21 @@ int listMatchObjects(void *a, void *b) {
 
 /* This function links the client to the global linked list of clients.
  * unlinkClient() does the opposite, among other things. */
+/* 把客户端放到全局双向链表server.clients中，
+ * 在createClient中调用，即客户端初始化的时候调用 */
 void linkClient(client *c) {
     listAddNodeTail(server.clients,c);
     /* Note that we remember the linked list node where the client is stored,
      * this way removing the client in unlinkClient() will not require
      * a linear scan, but just a constant time operation. */
-    c->client_list_node = listLast(server.clients);
+    c->client_list_node = listLast(server.clients); /* 记录客户端在链表中位置，方便常量时间删除 */
     uint64_t id = htonu64(c->id);
     raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
 }
 
+/* 创建管理客户端的结构体client，并且初始化它，
+ * 参数conn通常表示网络上的某个请求的连接，
+ * 但是可能为NULL，比如lua脚本中执行某些命令请求，就没有对应的客户端连接 */
 client *createClient(connection *conn) {
     client *c = zmalloc(sizeof(client));
 
@@ -92,15 +97,16 @@ client *createClient(connection *conn) {
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
     if (conn) {
-        connNonBlock(conn);
+        connNonBlock(conn); /* 设置客户端对应的fd为非阻塞 */
         connEnableTcpNoDelay(conn);
-        if (server.tcpkeepalive)
-            connKeepAlive(conn,server.tcpkeepalive);
-        connSetReadHandler(conn, readQueryFromClient);
+        if (server.tcpkeepalive) /* 默认tcpkeepalive的值为 300 秒 */
+            connKeepAlive(conn,server.tcpkeepalive); /* 设置系统SO_KEEPALIVE */
+        connSetReadHandler(conn, readQueryFromClient); /* 设置有客户端请求发过来的时候，响应的回调函数*/
         connSetPrivateData(conn, c);
     }
 
-    selectDb(c,0);
+	/* 初始化客户端结构体各种字段 */
+    selectDb(c,0); /* 默认选择的是0号db */
     uint64_t client_id = ++server.next_client_id;
     c->id = client_id;
     c->resp = 2;
@@ -775,6 +781,7 @@ int clientHasPendingReplies(client *c) {
     return c->bufpos || listLength(c->reply);
 }
 
+/* 客户端连接完全建立后（包括相关的数据也初始化了），调用的回调函数 */
 void clientAcceptHandler(connection *conn) {
     client *c = connGetPrivateData(conn);
 
@@ -835,7 +842,10 @@ void clientAcceptHandler(connection *conn) {
                           c);
 }
 
+/* 每次接受新的的连接的时候，每次最多接受的数目 */
 #define MAX_ACCEPTS_PER_CALL 1000
+
+/* */
 static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     client *c;
     UNUSED(ip);
@@ -844,6 +854,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
      * called, because we don't want to even start transport-level negotiation
      * if rejected.
      */
+	/* 接入控制，超过上限了，直接关闭连接 */
     if (listLength(server.clients) >= server.maxclients) {
         char *err = "-ERR max number of clients reached\r\n";
 
@@ -860,6 +871,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     }
 
     /* Create connection and client */
+	/* 创建连接对应的客户端，并且做fd做一些设置，比如NO_BLOCK等属性设置 */
     if ((c = createClient(conn)) == NULL) {
         char conninfo[100];
         serverLog(LL_WARNING,
@@ -881,6 +893,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
      *
      * Because of that, we must do nothing else afterwards.
      */
+	/* 调用函数clientAcceptHandler，设置状态为CONN_STATE_CONNECTED */
     if (connAccept(conn, clientAcceptHandler) == C_ERR) {
         char conninfo[100];
         serverLog(LL_WARNING,
@@ -891,6 +904,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     }
 }
 
+/* 有新的客户端连接的时候，相应的事件回调函数调用这个接口 */
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
     char cip[NET_IP_STR_LEN];
@@ -931,6 +945,7 @@ void acceptTLSHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 }
 
+/* 如果是unix域名方式，有新的客户端连接的时候，相应的事件回调函数调用这个接口 */
 void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cfd, max = MAX_ACCEPTS_PER_CALL;
     UNUSED(el);
@@ -1788,6 +1803,8 @@ void processInputBufferAndReplicate(client *c) {
     }
 }
 
+/* 客户端从网络上发送数据过来的时候，相应的响应函数，
+ * 调用这个接口只是表示网络上有数据可读了，还没有读取出来 */
 void readQueryFromClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     int nread, readlen;

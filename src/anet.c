@@ -28,6 +28,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * 对TCP套接字基本接口的一些封装
+ */
+
 #include "fmacros.h"
 
 #include <sys/types.h>
@@ -253,6 +257,10 @@ static int anetSetReuseAddr(char *err, int fd) {
     int yes = 1;
     /* Make sure connection-intensive things like the redis benchmark
      * will be able to close/open sockets a zillion of times */
+	/* 服务器应用程序都应该设置SO_REUSEADDR选项，
+	 * 方便在服务器异常退出的时候（没有显式的关闭套接字示释放端口）,
+	 * 能够马上bind这个端口启动
+	 * */
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt SO_REUSEADDR: %s", strerror(errno));
         return ANET_ERR;
@@ -260,6 +268,7 @@ static int anetSetReuseAddr(char *err, int fd) {
     return ANET_OK;
 }
 
+/* 创建SOCK_STREAML类型套接字，并套接字选项为REUSE */
 static int anetCreateSocket(char *err, int domain) {
     int s;
     if ((s = socket(domain, SOCK_STREAM, 0)) == -1) {
@@ -451,6 +460,7 @@ int anetWrite(int fd, char *buf, int count)
     return totlen;
 }
 
+/* 套接字s bind相应的地址，然后监听 */
 static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int backlog) {
     if (bind(s,sa,len) == -1) {
         anetSetError(err, "bind: %s", strerror(errno));
@@ -468,6 +478,8 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int 
 
 static int anetV6Only(char *err, int s) {
     int yes = 1;
+	/* IPV6_V6ONLY设置了，表示socket严格的发送和接受IPv6包，
+	 * 在这种情况，IPv4和IPv6应用可以同时绑定在同一个端口了 */
     if (setsockopt(s,IPPROTO_IPV6,IPV6_V6ONLY,&yes,sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt: %s", strerror(errno));
         close(s);
@@ -485,10 +497,16 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
 
     snprintf(_port,6,"%d",port);
     memset(&hints,0,sizeof(hints));
+	/* 只获取指定类型的IP地址 */
     hints.ai_family = af;
     hints.ai_socktype = SOCK_STREAM;
+	/* AI_PASSIVE用在bindaddr为NULL的情况，则返回所有相应类型的IP地址，
+	 * 如果bindaddr不是NULL，则AI_PASSIVE是忽略的，
+	 * 如果不设置AI_PASSIVE，并且bindaddr为NULL，则只会返回loopback地址
+	 * */
     hints.ai_flags = AI_PASSIVE;    /* No effect if bindaddr != NULL */
 
+	/* getaddrinfo 根据hints获取相应的地址信息 */
     if ((rv = getaddrinfo(bindaddr,_port,&hints,&servinfo)) != 0) {
         anetSetError(err, "%s", gai_strerror(rv));
         return ANET_ERR;
@@ -515,6 +533,7 @@ end:
     return s;
 }
 
+/* 针对IPv4地址的调用，创建监听套接字 */
 int anetTcpServer(char *err, int port, char *bindaddr, int backlog)
 {
     return _anetTcpServer(err, port, bindaddr, AF_INET, backlog);
@@ -531,6 +550,7 @@ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
     int s;
     struct sockaddr_un sa;
 
+	/* AF_LOCAL 也就是 AF_UNIX，用于在相同机器上高效通信的 socket family*/
     if ((s = anetCreateSocket(err,AF_LOCAL)) == ANET_ERR)
         return ANET_ERR;
 
@@ -544,6 +564,7 @@ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
     return s;
 }
 
+/* 接收客户端连接，如果被中断了，重试，直到成功或者发生错误 */
 static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *len) {
     int fd;
     while(1) {
@@ -561,6 +582,10 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     return fd;
 }
 
+/* 套接字s，接收新连接的时候，调用的这个接口来处理
+ * 参数ip和port用来保存客户端对应的ip地址和端口号
+ * 接受连接成功的话，返回相应的fd，否则返回ANET_ERR 
+ * */
 int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     int fd;
     struct sockaddr_storage sa;
@@ -568,6 +593,7 @@ int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     if ((fd = anetGenericAccept(err,s,(struct sockaddr*)&sa,&salen)) == -1)
         return ANET_ERR;
 
+	/* 保存客户端的ip和port，作为参数返回 */
     if (sa.ss_family == AF_INET) {
         struct sockaddr_in *s = (struct sockaddr_in *)&sa;
         if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);
@@ -580,6 +606,7 @@ int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     return fd;
 }
 
+/* unix域名套接字，接受新的连接 */
 int anetUnixAccept(char *err, int s) {
     int fd;
     struct sockaddr_un sa;

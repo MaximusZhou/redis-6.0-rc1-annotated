@@ -68,11 +68,11 @@ typedef struct ConnectionType {
 } ConnectionType;
 
 struct connection {
-    ConnectionType *type;
+    ConnectionType *type; /* 字段值指向全局变量CT_Socket，其在connection.c中初始化 */
     ConnectionState state;
     int flags;
     int last_errno;
-    void *private_data;
+    void *private_data; /* 通常就是这个连接对应的客户端结构体实例，即struct client */
     ConnectionCallbackFunc conn_handler;
     ConnectionCallbackFunc write_handler;
     ConnectionCallbackFunc read_handler;
@@ -164,6 +164,7 @@ static inline int connSetWriteHandlerWithBarrier(connection *conn, ConnectionCal
     return conn->type->set_write_handler(conn, func, barrier);
 }
 
+/* 实质调用的就是connSocketClose接口 */
 static inline void connClose(connection *conn) {
     conn->type->close(conn);
 }

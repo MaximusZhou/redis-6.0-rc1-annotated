@@ -88,6 +88,8 @@ connection *connCreateSocket() {
  * The socket is not read for I/O until connAccept() was called and
  * invoked the connection-level accept handler.
  */
+/* 通过一个已经接受客户端连接返回的fd来创建结构体connection，
+ * 通过这个结构体来管理这个fd */
 connection *connCreateAcceptedSocket(int fd) {
     connection *conn = connCreateSocket();
     conn->fd = fd;
@@ -216,6 +218,9 @@ static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc fu
 /* Register a read handler, to be called when the connection is readable.
  * If NULL, the existing handler is removed.
  */
+/*
+ * 设置当前有数据可读时候，相应的回调函数，如果为NULL，则删除相应可读事件的监控
+ * */
 static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc func) {
     if (func == conn->read_handler) return C_OK;
 
@@ -320,6 +325,8 @@ static ssize_t connSocketSyncReadLine(connection *conn, char *ptr, ssize_t size,
 }
 
 
+/* C99的标准，允许这样对结构体赋值，可读性更好，
+ * 在redis的Makefile中，使用的是c11标准编译 */
 ConnectionType CT_Socket = {
     .ae_handler = connSocketEventHandler,
     .close = connSocketClose,

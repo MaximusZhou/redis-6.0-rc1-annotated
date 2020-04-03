@@ -2594,8 +2594,16 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
+
 /* 在配置文件bind（一组ip地址）和port上创建相应的监听套接字，
- * 并且把结果保存到fds（套接字fd）和count（数量）*/
+ * 其中bind的地址是从server.bindaddr中读取的，而server.bindaddr的值，通过配置文件bind来初始化的。
+ * 如果配置文件没有配置bind，则默认redis会在服务器所有的ip地址上创建监听的套接字，
+ * 当前默认配置文件，配置的是127.0.0.1，即只有本机的客户端可以访问，
+ * 这些地址信息被读取保存在server.bindaddr和server.bindaddr_count中
+ * 函数监听的套接字信息把结果保存到fds（套接字fd）和count（数量），
+ * 即修改server.ipfd 和 server.ipfd_count的值
+ * 如果有一个地址不能bind，则返回C_ERR
+ */
 int listenToPort(int port, int *fds, int *count) {
     int j;
 
@@ -2608,19 +2616,26 @@ int listenToPort(int port, int *fds, int *count) {
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
 			/* 当bindaddr_count 为0，才可能执行以下逻辑，比如当
-			 * 配置文件中，没有配置bind字段的时候，则走下面的的逻辑*/
+			 * 配置文件中，没有配置bind字段的时候，则走下面的的逻辑
+			 * IPv6和IPv4都bind * 地址
+			 * */
             fds[*count] = anetTcp6Server(server.neterr,port,NULL,
                 server.tcp_backlog);
             if (fds[*count] != ANET_ERR) {
+				/* 创建成功，设置为非阻塞 */
                 anetNonBlock(NULL,fds[*count]);
                 (*count)++;
             } else if (errno == EAFNOSUPPORT) {
+				/* bind失败 */
                 unsupported++;
                 serverLog(LL_WARNING,"Not listening to IPv6: unsupported");
             }
 
+			/* 如果前面出现了错误，即返回了ANET_ERR了，则这个if分支就不用执行了,
+			 * 直接跑到最后面的错误处理逻辑了 */
             if (*count == 1 || unsupported) {
                 /* Bind the IPv4 address as well. */
+				/* IPv4也绑定 */
                 fds[*count] = anetTcpServer(server.neterr,port,NULL,
                     server.tcp_backlog);
                 if (fds[*count] != ANET_ERR) {
@@ -2634,9 +2649,13 @@ int listenToPort(int port, int *fds, int *count) {
             /* Exit the loop if we were able to bind * on IPv4 and IPv6,
              * otherwise fds[*count] will be ANET_ERR and we'll print an
              * error and return to the caller with an error. */
+			/*
+			 * 如果绑定成功，或者不支持，则退出循环，如果其中一个返回了AE_ERR了，则先不退出循环
+			 */
             if (*count + unsupported == 2) break;
         } else if (strchr(server.bindaddr[j],':')) {
             /* Bind IPv6 address. */
+			/* 指定的IPv6地址 */
             fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j],
                 server.tcp_backlog);
         } else {
@@ -2644,6 +2663,8 @@ int listenToPort(int port, int *fds, int *count) {
             fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
                 server.tcp_backlog);
         }
+		
+		/* 本次有错误，处理相关的错误 */
         if (fds[*count] == ANET_ERR) {
             serverLog(LL_WARNING,
                 "Could not create server TCP listening socket %s:%d: %s",
@@ -2752,6 +2773,7 @@ void initServer(void) {
 
     /* Open the TCP listening socket for the user commands. */
 	/* 根据配置的port，打开监听端口，用于接收客户的连接*/
+	/* 如果配置文件没有配置port的话，默认的值为6379 */
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
@@ -2760,6 +2782,8 @@ void initServer(void) {
         exit(1);
 
     /* Open the listening Unix domain socket. */
+	/* 如果配置文件有配置unix套接字域，则创建监听，接收链接，
+	 * 如果配置文件没有配置，则不会创建的 */
     if (server.unixsocket != NULL) {
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
