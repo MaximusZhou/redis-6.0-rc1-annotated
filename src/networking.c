@@ -101,7 +101,8 @@ client *createClient(connection *conn) {
         connEnableTcpNoDelay(conn);
         if (server.tcpkeepalive) /* 默认tcpkeepalive的值为 300 秒 */
             connKeepAlive(conn,server.tcpkeepalive); /* 设置系统SO_KEEPALIVE */
-        connSetReadHandler(conn, readQueryFromClient); /* 设置有客户端请求发过来的时候，响应的回调函数*/
+		/* 设置有客户端请求发过来的时候，响应的回调函数，readQueryFromClient */
+        connSetReadHandler(conn, readQueryFromClient); 
         connSetPrivateData(conn, c);
     }
 

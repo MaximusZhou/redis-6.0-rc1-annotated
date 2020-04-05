@@ -49,6 +49,20 @@
  *    depending on the implementation (for TCP they are; for TLS they aren't).
  */
 
+/*
+* 这个模块的主要目的为了提供简单网络连接抽象层，避免直接在不同的模块中进行socket和异步事件管理，
+* 这个模块也不会像其他模块那样，提供输入/输出的buffer管理、流量控制等，这些逻辑仍然放在networking.c
+* 模块中，这个模块的主要目标是透明处理基于TCP和TLS的连接，为此，该模块主要有两个功能：
+* 1. 实质的socket连接存在之前，可能connection就存在，这样做好处是，在实质的连接建立之前，
+*    就可以做不同的上下文和配置设置，比如设置回调函数。
+* 2. 可以register或者unregister相应的读/写事件的处理函数，当有数据可读/写的时候，
+*    直接调用相应register的函数，这个逻辑处理函数可能与实质的AE事件相对应，也可能不对应，
+*    跟具体的实现相关，比如TCP就是对应的，TLS就没有对应。
+*/
+
+/* 成员为各种函数，即各种网络操作，实质调用的函数，
+ * 比如写数据调用connWrite，调用就是CT_Socket->write字段函数，对应调用的就是connSocketWrite函数
+ * */
 ConnectionType CT_Socket;
 
 /* When a connection is created we must know its type already, but the
@@ -74,6 +88,20 @@ ConnectionType CT_Socket;
  * be embedded in different structs, not just client.
  */
 
+/*
+ * 如果监听接收连接，使用者首先调用connCreateSocket(connCreateAcceptedSocket)接口，
+ * 然后调用connAccept接口.
+ *
+ * 如果是请求连接的，使用者首先调用connCreateSocket接口，然后调用connConnect接口
+ */
+
+/*
+ * 这个模块主要完成的功能：
+ * 1. 连接状态的管理
+ * 2. 基础接口的简单封装，比如read/write
+ * 3. 回调函数的管理，比如有数据可读时候，调用已经注册好的函数
+ */
+
 connection *connCreateSocket() {
     connection *conn = zcalloc(sizeof(connection));
     conn->type = &CT_Socket;
@@ -88,8 +116,8 @@ connection *connCreateSocket() {
  * The socket is not read for I/O until connAccept() was called and
  * invoked the connection-level accept handler.
  */
-/* 通过一个已经接受客户端连接返回的fd来创建结构体connection，
- * 通过这个结构体来管理这个fd */
+/* 通过一个已经接受客户端连接返回的fd来创建结构体connection，通过这个结构体来管理这个fd，
+ * */
 connection *connCreateAcceptedSocket(int fd) {
     connection *conn = connCreateSocket();
     conn->fd = fd;
@@ -97,6 +125,11 @@ connection *connCreateAcceptedSocket(int fd) {
     return conn;
 }
 
+/* 
+ * 如果是请求建立连接的一方，在调用connConnect时候，最后调用就是这个接口，该接口主要工作
+ * 1. 以非阻塞的方式请求connect
+ * 2. 设置返回的fd为AE_WRITABLE监听事件
+ */
 static int connSocketConnect(connection *conn, const char *addr, int port, const char *src_addr,
         ConnectionCallbackFunc connect_handler) {
     int fd = anetTcpNonBlockBestEffortBindConnect(NULL,addr,port,src_addr);
@@ -142,6 +175,12 @@ void *connGetPrivateData(connection *conn) {
  * move here as we implement additional connection types.
  */
 
+/*
+ * 对一些基本接口，做一些封装，然后额外做一些处理。比如
+ * connSocketClose接口，除了close fd外，还删除对fd的事件监控，
+ * 此外释放相关的数据结构
+ */
+
 /* Close the connection and free resources. */
 static void connSocketClose(connection *conn) {
     if (conn->fd != -1) {
@@ -184,6 +223,7 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
     return ret;
 }
 
+/* 接收连接的，最后一步调用这个接口，执行相应的回调函数 */
 static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_handler) {
     if (conn->state != CONN_STATE_ACCEPTING) return C_ERR;
     conn->state = CONN_STATE_CONNECTED;
@@ -199,6 +239,11 @@ static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_hand
  * always called before and not after the read handler in a single event
  * loop.
  */
+/*
+ * 设置当前可写的时候，相应的回调函数，如果为NULL，则删除相应可写事件的监控，否则增加可写事件监控,
+ * 对于同时监听读写事件的fd，当有事件可处理的时候，通常是先处理读事件，然后是写事件，
+ * 如果设置 CONN_FLAG_WRITE_BARRIER，则先处理写事件，再处理读事件
+ * */
 static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc func, int barrier) {
     if (func == conn->write_handler) return C_OK;
 
@@ -219,7 +264,7 @@ static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc fu
  * If NULL, the existing handler is removed.
  */
 /*
- * 设置当前有数据可读时候，相应的回调函数，如果为NULL，则删除相应可读事件的监控
+ * 设置当前有数据可读时候，相应的回调函数，如果为NULL，则删除相应可读事件的监控，否则增加可读事件监控
  * */
 static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc func) {
     if (func == conn->read_handler) return C_OK;
@@ -237,12 +282,19 @@ static const char *connSocketGetLastError(connection *conn) {
     return strerror(conn->last_errno);
 }
 
+/* 
+ * 当fd有事件可以处理的，调用的函数，通过这个函数，调用注册的回调函数
+ * */
 static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientData, int mask)
 {
     UNUSED(el);
     UNUSED(fd);
     connection *conn = clientData;
 
+	/* 请求connect成功后，监听到fd可写，则调用相应的注册函数，
+	 * 即connect成功后，第一次可写调用的事件，
+	 * 同时设置状态CONN_STATE_CONNECTED，
+	 * */
     if (conn->state == CONN_STATE_CONNECTING &&
             (mask & AE_WRITABLE) && conn->conn_handler) {
 
@@ -270,6 +322,13 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
      * This is useful when, for instance, we want to do things
      * in the beforeSleep() hook, like fsync'ing a file to disk,
      * before replying to a client. */
+
+	/*
+	 * 通常先执行可读事件，然后执行可写事件，这对于处理查询命令是非常有用，
+	 * 先读取请求的命令，处理完成后，马上返回给客户端.
+	 * 如果设置了WRITE_BARRIER，则反过来，先处理写事件，再处理读事件，
+	 * 这种情况比如用在，在返回客户端之前，需要把数据写到磁盘上
+	 */
     int invert = conn->flags & CONN_FLAG_WRITE_BARRIER;
 
     int call_write = (mask & AE_WRITABLE) && conn->write_handler;
