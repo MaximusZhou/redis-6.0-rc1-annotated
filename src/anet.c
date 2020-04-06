@@ -29,7 +29,9 @@
  */
 
 /*
- * 对TCP套接字基本接口的一些封装
+ * 对TCP套接字基本接口的一些封装，比如：
+ * 设置各种套接字选项, accept接口接收连接封装, connect请求连接封装，
+ * bind地址和创建监听套接字
  */
 
 #include "fmacros.h"
@@ -62,6 +64,7 @@ static void anetSetError(char *err, const char *fmt, ...)
     va_end(ap);
 }
 
+/* 设置或者取消fd阻塞选项 */
 int anetSetBlock(char *err, int fd, int non_block) {
     int flags;
 
@@ -96,6 +99,21 @@ int anetBlock(char *err, int fd) {
 /* Set TCP keep alive option to detect dead peers. The interval option
  * is only used for Linux as we are using Linux-specific APIs to set
  * the probe send time, interval, and count. */
+
+/*
+ * 设置SO_KEEPALIVE选项，对与linux平台设置相关参数，
+ * 通过SO_KEEPALIVE，内核检测到deed peers，一旦内核检测到对方这个socket dead，
+ * 这时候，使用select/poll, 会发出一个可读的事件，然后调用read/recv接口，会返回一个错误，
+ * 如果此外往这个套接字写数据，则会得到一个SIGPIPE的信号
+ *
+ * 对于linux来说，检测到超时的时间值为： keepalive_time + (keepalive_intrvl*keepalive_probes).
+ * 即keepalive_time后，发送第一个probe ack，然后每隔keepalive_intrvl发送一次，
+ * 发送keepalive_intrvl次，对于全局设置：
+ *  /proc/sys/net/ipv4/tcp_keepalive_time
+ *  /proc/sys/net/ipv4/tcp_keepalive_intvl
+ *  /proc/sys/net/ipv4/tcp_keepalive_probes
+ *
+ * */
 int anetKeepAlive(char *err, int fd, int interval)
 {
     int val = 1;
@@ -112,11 +130,14 @@ int anetKeepAlive(char *err, int fd, int interval)
      * actually useful. */
 
     /* Send first probe after interval. */
+	/* interval值后，发送第一个probe */
     val = interval;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) < 0) {
         anetSetError(err, "setsockopt TCP_KEEPIDLE: %s\n", strerror(errno));
         return ANET_ERR;
     }
+
+	/* 每隔 interval/3 发送一次，最多发送3次 */
 
     /* Send next probes after the specified interval. Note that we set the
      * delay as interval / 3, as we send three probes before detecting
@@ -218,12 +239,17 @@ int anetRecvTimeout(char *err, int fd, long long ms) {
  * If flags is set to ANET_IP_ONLY the function only resolves hostnames
  * that are actually already IPv4 or IPv6 addresses. This turns the function
  * into a validating / normalizing function. */
+/*
+ * 用来hos对应的ip地址，可能是IPv4 或者 IPv6，结果保存在ipbuf中，
+ */
 int anetGenericResolve(char *err, char *host, char *ipbuf, size_t ipbuf_len,
                        int flags)
 {
     struct addrinfo hints, *info;
     int rv;
 
+	/* 设置AI_NUMERICHOST的意思，主机名已经是IPv4或者IPv6地址，不需要做DNS域名解析了，
+	 * */
     memset(&hints,0,sizeof(hints));
     if (flags & ANET_IP_ONLY) hints.ai_flags = AI_NUMERICHOST;
     hints.ai_family = AF_UNSPEC;
@@ -285,6 +311,13 @@ static int anetCreateSocket(char *err, int domain) {
     return s;
 }
 
+/*
+ * 请求connect addr和port
+ * 在请求connect的时候，参数source_addr是客户端希望bind使用的地址,
+ * 在指定source_addr的情况下，如果connect失败了，此时如果flags设置了ANET_CONNECT_BE_BINDING，
+ * 则会尝试不要求bind source_addr的情况下，再去调用一次，即如果设置了ANET_CONNECT_BE_BINDING，
+ * 首先尝试用source_addr去connect，如果失败了，则去掉这个要求去connect
+ */
 #define ANET_CONNECT_NONE 0
 #define ANET_CONNECT_NONBLOCK 1
 #define ANET_CONNECT_BE_BINDING 2 /* Best effort binding. */
@@ -336,8 +369,13 @@ static int anetTcpGenericConnect(char *err, const char *addr, int port,
         if (connect(s,p->ai_addr,p->ai_addrlen) == -1) {
             /* If the socket is non-blocking, it is ok for connect() to
              * return an EINPROGRESS error here. */
+			/* 
+			 * 非阻塞的方式connect，返回EINPROGRESS了，表示在等待连接，直接返回
+			 */
             if (errno == EINPROGRESS && flags & ANET_CONNECT_NONBLOCK)
                 goto end;
+
+			/* 有错误，继续连下一个地址 */
             close(s);
             s = ANET_ERR;
             continue;
@@ -361,6 +399,7 @@ end:
 
     /* Handle best effort binding: if a binding address was used, but it is
      * not possible to create a socket, try again without a binding address. */
+	/* 失败了，则不要bind，再去connect一次 */
     if (s == ANET_ERR && source_addr && (flags & ANET_CONNECT_BE_BINDING)) {
         return anetTcpGenericConnect(err,addr,port,NULL,flags);
     } else {
@@ -368,6 +407,7 @@ end:
     }
 }
 
+/* 阻塞去connect */
 int anetTcpConnect(char *err, const char *addr, int port)
 {
     return anetTcpGenericConnect(err,addr,port,NULL,ANET_CONNECT_NONE);
@@ -392,6 +432,7 @@ int anetTcpNonBlockBestEffortBindConnect(char *err, const char *addr, int port,
             ANET_CONNECT_NONBLOCK|ANET_CONNECT_BE_BINDING);
 }
 
+/* unix域，connect指定的path */
 int anetUnixGenericConnect(char *err, const char *path, int flags)
 {
     int s;
@@ -432,6 +473,7 @@ int anetUnixNonBlockConnect(char *err, const char *path)
 
 /* Like read(2) but make sure 'count' is read before to return
  * (unless error or EOF condition is encountered) */
+/* 读取count字节，触发出现错误或者读完了 */
 int anetRead(int fd, char *buf, int count)
 {
     ssize_t nread, totlen = 0;
@@ -447,6 +489,7 @@ int anetRead(int fd, char *buf, int count)
 
 /* Like write(2) but make sure 'count' is written before to return
  * (unless error is encountered) */
+/* 写count字节，触发出现错误或者读完了 */
 int anetWrite(int fd, char *buf, int count)
 {
     ssize_t nwritten, totlen = 0;
@@ -564,7 +607,7 @@ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
     return s;
 }
 
-/* 接收客户端连接，如果被中断了，重试，直到成功或者发生错误 */
+/* 接收客户端连接请求，如果被中断了，重试，直到成功或者发生错误 */
 static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *len) {
     int fd;
     while(1) {
@@ -617,6 +660,9 @@ int anetUnixAccept(char *err, int s) {
     return fd;
 }
 
+/* 
+ * 返回fd对应连接的ip地址和端口
+ * */
 int anetPeerToString(int fd, char *ip, size_t ip_len, int *port) {
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
@@ -670,6 +716,7 @@ int anetFormatPeer(int fd, char *buf, size_t buf_len) {
     return anetFormatAddr(buf, buf_len, ip, port);
 }
 
+/* 获取fd本身对应的ip地址和端口*/
 int anetSockName(int fd, char *ip, size_t ip_len, int *port) {
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);

@@ -371,6 +371,9 @@ static int connSocketBlockingConnect(connection *conn, const char *addr, int por
  * NOTE: This should ideally be refactored out in favor of pure async work.
  */
 
+/*
+ * 下面几个是阻塞读写操作的接口，或超时，或成功返回
+ */
 static ssize_t connSocketSyncWrite(connection *conn, char *ptr, ssize_t size, long long timeout) {
     return syncWrite(conn->fd, ptr, size, timeout);
 }
@@ -402,6 +405,10 @@ ConnectionType CT_Socket = {
     .sync_readline = connSocketSyncReadLine
 };
 
+/*
+ * 下面接口都是为了方便通过conn来操作相应的fd，最终调用都是anet.c中接口，用来
+ * 比如设置各种套接字选项
+ */
 
 int connGetSocketError(connection *conn) {
     int sockerr = 0;

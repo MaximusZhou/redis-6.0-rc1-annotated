@@ -27,6 +27,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * 管理连接的创建(包括客户端对应的结构体的创建)，以及从网络上数据的读取,
+ * 以及把相应的结果返还给客户端等操作, 各种读写事件最后回调函数调用的接口也通常在这个模块里，
+ * 即与客户端通信相关的接口都在这个模块
+ */
+
 #include "server.h"
 #include "atomicvar.h"
 #include <sys/socket.h>
@@ -1172,6 +1178,9 @@ void freeClient(client *c) {
  * This function is useful when we need to terminate a client but we are in
  * a context where calling freeClient() is not possible, because the client
  * should be valid for the continuation of the flow of the program. */
+/*
+ * 把要关闭的客户端放到clients_to_close队列中，等待释放
+ * */
 void freeClientAsync(client *c) {
     /* We need to handle concurrent access to the server.clients_to_close list
      * only in the freeClientAsync() function, since it's the only function that
@@ -1186,6 +1195,9 @@ void freeClientAsync(client *c) {
     pthread_mutex_unlock(&async_free_queue_mutex);
 }
 
+/*
+ * 在beforeSleep函数中调用，用来释放在队列中的客户端
+ */
 void freeClientsInAsyncFreeQueue(void) {
     while (listLength(server.clients_to_close)) {
         listNode *ln = listFirst(server.clients_to_close);
@@ -1783,6 +1795,10 @@ void processInputBuffer(client *c) {
  * the replication forwarding to the sub-replicas, in case the client 'c'
  * is flagged as master. Usually you want to call this instead of the
  * raw processInputBuffer(). */
+/*
+ * 如果一般的客户端，则直接调用processInputBuffer处理，
+ * 如果是客户端是CLIENT_MASTER，用于副本转发到子副本，则需要做一些额外的处理
+ */
 void processInputBufferAndReplicate(client *c) {
     if (!(c->flags & CLIENT_MASTER)) {
         processInputBuffer(c);
@@ -1805,7 +1821,9 @@ void processInputBufferAndReplicate(client *c) {
 }
 
 /* 客户端从网络上发送数据过来的时候，相应的响应函数，
- * 调用这个接口只是表示网络上有数据可读了，还没有读取出来 */
+ * 调用这个接口只是表示网络上有数据可读了，还没有读取出来，
+ * 通过这个接口才真正从网络上读取数据，然后根据协议分析数据处理相应逻辑
+ * */
 void readQueryFromClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     int nread, readlen;
@@ -1835,6 +1853,7 @@ void readQueryFromClient(connection *conn) {
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
+	/* 从网络读取该客户端的请求数据 */
     nread = connRead(c->conn, c->querybuf+qblen, readlen);
     if (nread == -1) {
         if (connGetState(conn) == CONN_STATE_CONNECTED) {
@@ -1860,6 +1879,7 @@ void readQueryFromClient(connection *conn) {
     c->lastinteraction = server.unixtime;
     if (c->flags & CLIENT_MASTER) c->read_reploff += nread;
     server.stat_net_input_bytes += nread;
+	/* 从客户端收到的查询请求数据达到上限了，则强制关掉 */
     if (sdslen(c->querybuf) > server.client_max_querybuf_len) {
         sds ci = catClientInfoString(sdsempty(),c), bytes = sdsempty();
 

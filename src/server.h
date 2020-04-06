@@ -134,6 +134,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #define STATS_METRIC_COUNT 3
 
 /* Protocol and I/O related defines */
+/* 每个客户端，查询buff最大长度为1GB */
 #define PROTO_MAX_QUERYBUF_LEN  (1024*1024*1024) /* 1GB max query buffer. */
 #define PROTO_IOBUF_LEN         (1024*16)  /* Generic I/O buffer size */
 #define PROTO_REPLY_CHUNK_BYTES (16*1024) /* 16k output buffer */
@@ -778,6 +779,7 @@ typedef struct client {
     size_t sentlen;         /* Amount of bytes already sent in the current
                                buffer or object being sent. */
     time_t ctime;           /* Client creation time. */
+	/* 最近一次从该客户端读取数据的时间，初始值为创建客户端连接的时间 */
     time_t lastinteraction; /* Time of the last interaction, used for timeout */
     time_t obuf_soft_limit_reached_time;
     uint64_t flags;         /* Client flags: CLIENT_* macros. */
