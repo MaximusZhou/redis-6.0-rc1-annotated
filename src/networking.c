@@ -1431,6 +1431,13 @@ void unprotectClient(client *c) {
  * have a well formed command. The function also returns C_ERR when there is
  * a protocol error: in such a case the client structure is setup to reply
  * with the error and close the connection. */
+/*
+ * 这个接口处理，客户端inline protocol方式通信，而不是RESP方式协议，
+ * 比如telnet连上服务器通信，就可以使用这种方式.
+ * 这个函数处理客户端 query buffer中的数据，然后构造command放到client结构体中，
+ * 为接下来执行命令做准备。如果命令准备好执行了，即客户端发过来的命令完整，可以执行了，
+ * 则返回C_OK，否则返回C_ERR，表示还需要进一步读取相关的数据（比如从网络上）才能构造完整的命令
+ */
 int processInlineBuffer(client *c) {
     char *newline;
     int argc, j, linefeed_chars = 1;
@@ -1708,6 +1715,10 @@ int processCommandAndResetClient(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
+/*
+ * 当前从socket读取新的数据，或者是原来被blocked的cliet被重新激活了，
+ * 都会调用这个接口
+ * */
 void processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
     while(c->qb_pos < sdslen(c->querybuf)) {
@@ -1735,6 +1746,8 @@ void processInputBuffer(client *c) {
         if (c->flags & (CLIENT_CLOSE_AFTER_REPLY|CLIENT_CLOSE_ASAP)) break;
 
         /* Determine request type when unknown. */
+
+		/* 还没有计算，则计算当前的请求类型 */
         if (!c->reqtype) {
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;

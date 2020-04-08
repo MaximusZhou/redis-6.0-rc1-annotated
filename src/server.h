@@ -260,8 +260,8 @@ typedef long long ustime_t; /* microsecond time type. */
 #define BLOCKED_NUM 6     /* Number of blocked states. */
 
 /* Client request types */
-#define PROTO_REQ_INLINE 1
-#define PROTO_REQ_MULTIBULK 2
+#define PROTO_REQ_INLINE 1 /* 以inline command方式的协议，比如telnet方式请求 */
+#define PROTO_REQ_MULTIBULK 2 /* 以RESP方式的协议，比如redis-cli，或者各种redis driver */
 
 /* Client classes for client limits, currently used only for
  * the max-client-output-buffer limit implementation. */
