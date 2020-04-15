@@ -209,7 +209,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #define CLIENT_SLAVE (1<<0)   /* This client is a repliaca */
 #define CLIENT_MASTER (1<<1)  /* This client is a master */
 #define CLIENT_MONITOR (1<<2) /* This client is a slave monitor, see MONITOR */
-#define CLIENT_MULTI (1<<3)   /* This client is in a MULTI context */
+#define CLIENT_MULTI (1<<3)   /* This client is in a MULTI context，为了支持事务 */
 #define CLIENT_BLOCKED (1<<4) /* The client is waiting in a blocking operation */
 #define CLIENT_DIRTY_CAS (1<<5) /* Watched keys modified. EXEC will fail. */
 #define CLIENT_CLOSE_AFTER_REPLY (1<<6) /* Close after writing entire reply. */
@@ -774,7 +774,9 @@ typedef struct client {
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
     int multibulklen;       /* Number of multi bulk arguments left to read. */
     long bulklen;           /* Length of bulk argument in multi bulk request. */
+	/* 当回复给客户端数据，用字段buf保存不下时，则使用这个字段来保存回复数据 */
     list *reply;            /* List of reply objects to send to the client. */
+	/* reply_bytes 是 reply链表所有的节点大小的之和，但是不是实质要回复的数据大小 */
     unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
     size_t sentlen;         /* Amount of bytes already sent in the current
                                buffer or object being sent. */
@@ -827,7 +829,7 @@ typedef struct client {
 
     /* Response buffer */
     int bufpos;
-    char buf[PROTO_REPLY_CHUNK_BYTES];
+    char buf[PROTO_REPLY_CHUNK_BYTES]; /* 保存回复给客户端的内容 */
 } client;
 
 struct saveparam {

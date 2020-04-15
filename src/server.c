@@ -3378,19 +3378,27 @@ void call(client *c, int flags) {
  * If C_OK is returned the client is still alive and valid and
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
+/*
+ * 这个接口执行客户端中已经准备好的命令参数，即在argv/argc中的内容
+ */
 int processCommand(client *c) {
+	/* 预处理一下命令参数 */
     moduleCallCommandFilters(c);
 
     /* The QUIT command is handled separately. Normal command procs will
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
      * a regular command proc. */
+	/* 处理quit命令 */
     if (!strcasecmp(c->argv[0]->ptr,"quit")) {
         addReply(c,shared.ok);
+
+		 /* 在writeToClient中判断这个这个flag，释放客户端连接和相关数据 */
         c->flags |= CLIENT_CLOSE_AFTER_REPLY;
         return C_ERR;
     }
 
+	/* 通过命令名字查找相应的命令处理结构体redisCommand */
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
@@ -3406,6 +3414,7 @@ int processCommand(client *c) {
         return C_OK;
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
+		/* 检测参数个数是否正确 */
         flagTransaction(c);
         addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
             c->cmd->name);
@@ -3589,15 +3598,19 @@ int processCommand(client *c) {
         addReply(c, shared.slowscripterr);
         return C_OK;
     }
+	
+	/* 各种条件判断后，真正开始执行命令 */
 
     /* Exec the command */
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
+		/* 事务处理，多条命令，先放到队列中 */
         queueMultiCommand(c);
         addReply(c,shared.queued);
     } else {
+		/* 处理相应的命令 */
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))

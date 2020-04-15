@@ -252,6 +252,9 @@ int prepareClientToWrite(client *c) {
  * Low level functions to add more data to output buffers.
  * -------------------------------------------------------------------------- */
 
+/* 
+ * 把s中长度为len的字符串，push到客户端c对应的output buff中
+ */
 int _addReplyToBuffer(client *c, const char *s, size_t len) {
     size_t available = sizeof(c->buf)-c->bufpos;
 
@@ -259,9 +262,11 @@ int _addReplyToBuffer(client *c, const char *s, size_t len) {
 
     /* If there already are entries in the reply list, we cannot
      * add anything more to the static buffer. */
+	/* 只要有使用reply list保存回复的数据，就应该都用 reply list来保存了  */
     if (listLength(c->reply) > 0) return C_ERR;
 
     /* Check that the buffer has enough space available for this string. */
+	/* buf字段保存不下回复的数据，则会调用_addReplyProtoToList中，保存到list中 */
     if (len > available) return C_ERR;
 
     memcpy(c->buf+c->bufpos,s,len);
@@ -279,6 +284,9 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
      * addDeferredMultiBulkLength() is used, it sets a dummy node to NULL just
      * fo fill it later, when the size of the bulk length is set. */
 
+	/* 尝试放到最后一个节点剩余的空间中，如果放不下，则分配新的节点
+	 * 去保存要回复的数据
+	 * */
     /* Append to tail string when possible. */
     if (tail) {
         /* Copy the part we can fit into the tail, and leave the rest for a
@@ -302,6 +310,8 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
         listAddNodeTail(c->reply, tail);
         c->reply_bytes += tail->size;
     }
+
+	/* 检查要回复的数据的大小是否达到设置的上限了，如果是，则调用freeClientAsync关闭连接 */
     asyncCloseClientOnOutputBufferLimitReached(c);
 }
 
@@ -311,6 +321,11 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
  * -------------------------------------------------------------------------- */
 
 /* Add the object 'obj' string representation to the client output buffer. */
+/* 
+ * 把obj中的内容push到客户端对应的output buff中，obj表示字符串或者int，
+ * 如果是int的话，则转换为字符串
+ * 该接口调用了_addReplyToBuffer来实现
+ */
 void addReply(client *c, robj *obj) {
     if (prepareClientToWrite(c) != C_OK) return;
 
@@ -1226,6 +1241,11 @@ client *lookupClientByID(uint64_t id) {
  * This function is called by threads, but always with handler_installed
  * set to 0. So when handler_installed is set to 0 the function must be
  * thread safe. */
+/*
+ * 把output buffer中的数据发送到客户端，如果调用这个接口后，客户端还有效，则返回C_OK，
+ * 如果客户端被释放了，则返回C_ERR，比如客户端调用这个接口前，flag被设置了CLIENT_CLOSE_AFTER_REPLY.
+ *
+ */
 int writeToClient(client *c, int handler_installed) {
     ssize_t nwritten = 0, totwritten = 0;
     size_t objlen;
@@ -1434,7 +1454,7 @@ void unprotectClient(client *c) {
 /*
  * 这个接口处理，客户端inline protocol方式通信，而不是RESP方式协议，
  * 比如telnet连上服务器通信，就可以使用这种方式.
- * 这个函数处理客户端 query buffer中的数据，然后构造command放到client结构体中，
+ * 这个函数处理客户端 query buffer中的数据，然后构造command放到client结构体argv中，
  * 为接下来执行命令做准备。如果命令准备好执行了，即客户端发过来的命令完整，可以执行了，
  * 则返回C_OK，否则返回C_ERR，表示还需要进一步读取相关的数据（比如从网络上）才能构造完整的命令
  */
@@ -1443,6 +1463,8 @@ int processInlineBuffer(client *c) {
     int argc, j, linefeed_chars = 1;
     sds *argv, aux;
     size_t querylen;
+
+	/* 每条命令以\n 或者 \r\n 分隔*/
 
     /* Search for end of line */
     newline = strchr(c->querybuf+c->qb_pos,'\n');
@@ -1461,8 +1483,10 @@ int processInlineBuffer(client *c) {
         newline--, linefeed_chars++;
 
     /* Split the input buffer up to the \r\n */
-    querylen = newline-(c->querybuf+c->qb_pos);
+    querylen = newline-(c->querybuf+c->qb_pos); /* 计算当前请求命令对应的长度，不包括\r\n字符 */
     aux = sdsnewlen(c->querybuf+c->qb_pos,querylen);
+
+	 /* 把aux字符串分割为参数，参数的个数保存在argc中 */
     argv = sdssplitargs(aux,&argc);
     sdsfree(aux);
     if (argv == NULL) {
@@ -1478,6 +1502,7 @@ int processInlineBuffer(client *c) {
         c->repl_ack_time = server.unixtime;
 
     /* Move querybuffer position to the next query in the buffer. */
+	/* 移动查询buff中要处理数据的位置，方便处理下一个查询 */
     c->qb_pos += querylen+linefeed_chars;
 
     /* Setup argv array on client structure */
@@ -1487,6 +1512,9 @@ int processInlineBuffer(client *c) {
     }
 
     /* Create redis objects for all arguments. */
+
+	/* 把查询命令所有的参数构造为一个 redis object对象保存到客户端字段argv中，
+	 * 后面执行命令相关的参数就从字段argv中获取 */
     for (c->argc = 0, j = 0; j < argc; j++) {
         if (sdslen(argv[j])) {
             c->argv[c->argc] = createObject(OBJ_STRING,argv[j]);
@@ -1540,6 +1568,16 @@ static void setProtocolError(const char *errstr, client *c) {
  * This function is called if processInputBuffer() detects that the next
  * command is in RESP format, so the first byte in the command is found
  * to be '*'. Otherwise for inline commands processInlineBuffer() is called. */
+/*
+ * 这个接口处理，以RESP方式协议通信方式（以*开头就认为后面读取的数据以RESP方式通信），
+ * 比如redis-cli输入的命令就转换为RESP协议格式发送给服务端处理.
+ * 这个函数处理客户端 query buffer中的数据，然后构造command放到client结构体argv中，
+ * 为接下来执行命令做准备。如果命令准备好执行了，即客户端发过来的命令完整，可以执行了，
+ * 则返回C_OK，否则返回C_ERR，表示还需要进一步读取相关的数据（比如从网络上）才能构造完整的命令,
+ * 或者协议错误了，也返回C_ERR，这时候设置错误信息到客户端结构体中用于返回，然后关闭链接
+ *
+ * 实质上，本接口主要工作都是按照RESP协议格式来解析相关的参数，然后放到客户端结构体argv字段中
+ */
 int processMultibulkBuffer(client *c) {
     char *newline = NULL;
     int ok;
@@ -1747,7 +1785,8 @@ void processInputBuffer(client *c) {
 
         /* Determine request type when unknown. */
 
-		/* 还没有计算，则计算当前的请求类型 */
+		/* 还没有计算，则计算当前的请求类型，以*开头的字符，
+		 * 则认为是PROTO_REQ_MULTIBULK类型，即按RESP格式发送命令的 */
         if (!c->reqtype) {
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;
@@ -1782,10 +1821,13 @@ void processInputBuffer(client *c) {
             /* If we are in the context of an I/O thread, we can't really
              * execute the command here. All we can do is to flag the client
              * as one that needs to process the command. */
+			/* 想把查询buff的字符串解析好，等待后面执行 */
             if (c->flags & CLIENT_PENDING_READ) {
                 c->flags |= CLIENT_PENDING_COMMAND;
                 break;
             }
+
+			/* 这里开始执行，刚才解析处理的命令 */
 
             /* We are finally ready to execute the command. */
             if (processCommandAndResetClient(c) == C_ERR) {
@@ -1795,6 +1837,8 @@ void processInputBuffer(client *c) {
                 return;
             }
         }
+
+		/* 一次处理client中查询buff中所有的命令 */
     }
 
     /* Trim to pos */
@@ -2479,6 +2523,8 @@ void rewriteClientCommandArgument(client *c, int i, robj *newval) {
  * Note: this function is very fast so can be called as many time as
  * the caller wishes. The main usage of this function currently is
  * enforcing the client output length limits. */
+/* 计算用来保存回复数据的链表所有占用的空间总的大小，主要包括数据结构的大小，
+ * 而不仅仅是回复的数据大小 */
 unsigned long getClientOutputBufferMemoryUsage(client *c) {
     unsigned long list_item_size = sizeof(listNode) + sizeof(clientReplyBlock);
     return c->reply_bytes + (list_item_size*listLength(c->reply));
@@ -2526,6 +2572,8 @@ char *getClientTypeName(int class) {
  *
  * Return value: non-zero if the client reached the soft or the hard limit.
  *               Otherwise zero is returned. */
+/* 检测客户端output buff是否达到上限，如果是，则返回1，
+ * soft limit 和 hard limit 是通过 client-output-buffer-limit 来配置的*/
 int checkClientOutputBufferLimits(client *c) {
     int soft = 0, hard = 0, class;
     unsigned long used_mem = getClientOutputBufferMemoryUsage(c);
@@ -2544,6 +2592,8 @@ int checkClientOutputBufferLimits(client *c) {
 
     /* We need to check if the soft limit is reached continuously for the
      * specified amount of seconds. */
+	/* 如果连续超过了soft limit并且从第一次超过到现在的时间间隔超过一定时间了，
+	 * 才设置soft为1，否则soft为0，则返回0 */
     if (soft) {
         if (c->obuf_soft_limit_reached_time == 0) {
             c->obuf_soft_limit_reached_time = server.unixtime;
@@ -2571,6 +2621,10 @@ int checkClientOutputBufferLimits(client *c) {
  * Note: we need to close the client asynchronously because this function is
  * called from contexts where the client can't be freed safely, i.e. from the
  * lower level functions pushing data inside the client output buffers. */
+
+/* 检查要回复的数据的大小是否达到设置的上限了，如果是，则调用freeClientAsync关闭连接,
+ * 要异步关闭客户端的原因是，这个函数被调用的上下文可能不能让客户端安全的释放，
+ * 比如向客户端buff压入回复数据的是，会调用这个接口 */
 void asyncCloseClientOnOutputBufferLimitReached(client *c) {
     if (!c->conn) return; /* It is unsafe to free fake clients. */
     serverAssert(c->reply_bytes < SIZE_MAX-(1024*64));
