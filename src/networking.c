@@ -184,10 +184,18 @@ client *createClient(connection *conn) {
  * handleClientsWithPendingWrites() function).
  * If we fail and there is more data to write, compared to what the socket
  * buffers can hold, then we'll really install the handler. */
+/*
+ * 这个函数没有真正设置写事件的回调函数，而是把客户端刚到等待写的客户端队列中,
+ * 即server.clients_pending_write中，在接口 handleClientsWithPendingWrites 中遍历列表，
+ * 即在进入等待事件前，触发遍历列表的逻辑，在遍历的时候，尝试直接向客户端写数据，
+ * 如果一次性写不完所有要发送的数据，才真正设置客户端可写事件的回调函数
+ *
+ */
 void clientInstallWriteHandler(client *c) {
     /* Schedule the client to write the output buffers to the socket only
      * if not already done and, for slaves, if the slave can actually receive
      * writes at this stage. */
+	/* 只放入队列一次，replstate初始值为 REPL_STATE_NONE */
     if (!(c->flags & CLIENT_PENDING_WRITE) &&
         (c->replstate == REPL_STATE_NONE ||
          (c->replstate == SLAVE_STATE_ONLINE && !c->repl_put_online_on_ack)))
@@ -225,6 +233,11 @@ void clientInstallWriteHandler(client *c) {
  * Typically gets called every time a reply is built, before adding more
  * data to the clients output buffers. If the function returns C_ERR no
  * data should be appended to the output buffers. */
+/*
+ * 在每次给客户端发送的数据时候，都会首先尝试调用这个接口，比如addReply接口中就会调用.
+ * 对应通常的客户端，这个接口主要工作通过调用接口 clientInstallWriteHandler 设置客户端的
+ * 写数据的回调函数，即当客户端可写的时候，调用的函数
+ */
 int prepareClientToWrite(client *c) {
     /* If it's the Lua client we always return ok without installing any
      * handler since there is no socket at all. */
@@ -242,6 +255,8 @@ int prepareClientToWrite(client *c) {
 
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data). */
+	/* 调用clientHasPendingReplies的目的，就是检查是否设置了写操作的回调函数了，
+	 * 如果发送缓存区有数据，则认为已经设置过了 */
     if (!clientHasPendingReplies(c)) clientInstallWriteHandler(c);
 
     /* Authorize the caller to queue in the output buffer of this client. */
@@ -1074,6 +1089,7 @@ void unlinkClient(client *c) {
     if (c->flags & CLIENT_TRACKING) disableTracking(c);
 }
 
+/* 真正做客户端释放相关的逻辑 */
 void freeClient(client *c) {
     listNode *ln;
 
@@ -1194,7 +1210,10 @@ void freeClient(client *c) {
  * a context where calling freeClient() is not possible, because the client
  * should be valid for the continuation of the flow of the program. */
 /*
- * 把要关闭的客户端放到clients_to_close队列中，等待释放
+ * 把要关闭的客户端放到clients_to_close队列中，等待释放,
+ * 在接口freeClientsInAsyncFreeQueue中真正释放
+ * 这个接口可能被多个线程调用，因为writeToClient可能被多个IO线程调用,
+ * 因此修改server.clients_to_close需要加锁
  * */
 void freeClientAsync(client *c) {
     /* We need to handle concurrent access to the server.clients_to_close list
@@ -1212,6 +1231,9 @@ void freeClientAsync(client *c) {
 
 /*
  * 在beforeSleep函数中调用，用来释放在队列中的客户端
+ * 这个地方主线程操作不用加锁，原因是，主线程会在接口
+ * handleClientsWithPendingWritesUsingThreads等待IO线程工作结束，才往下执行，
+ * 实质IO线程只是在指定的时间范围内工作的
  */
 void freeClientsInAsyncFreeQueue(void) {
     while (listLength(server.clients_to_close)) {
@@ -1244,7 +1266,9 @@ client *lookupClientByID(uint64_t id) {
 /*
  * 把output buffer中的数据发送到客户端，如果调用这个接口后，客户端还有效，则返回C_OK，
  * 如果客户端被释放了，则返回C_ERR，比如客户端调用这个接口前，flag被设置了CLIENT_CLOSE_AFTER_REPLY.
- *
+ * 参数handler_installed的意思，是否通过触发事件回调函数来调用的，如果是，则传入1，
+ * 即接口 sendReplyToClient 调用的，其他情况（直接尝试发送或者io线程）都是传入0,
+ * handler_installed传入1的时候，如果数据发送完成，设置相应客户端可写事件监控和回调函数
  */
 int writeToClient(client *c, int handler_installed) {
     ssize_t nwritten = 0, totwritten = 0;
@@ -1253,6 +1277,7 @@ int writeToClient(client *c, int handler_installed) {
 
     while(clientHasPendingReplies(c)) {
         if (c->bufpos > 0) {
+			/* 先写数组buff中的数据，即c->buf中的数据 */
             nwritten = connWrite(c->conn,c->buf+c->sentlen,c->bufpos-c->sentlen);
             if (nwritten <= 0) break;
             c->sentlen += nwritten;
@@ -1265,6 +1290,7 @@ int writeToClient(client *c, int handler_installed) {
                 c->sentlen = 0;
             }
         } else {
+			/* 然后发送保存在list中的数据，即c->reply中的数据 */
             o = listNodeValue(listFirst(c->reply));
             objlen = o->used;
 
@@ -1280,12 +1306,14 @@ int writeToClient(client *c, int handler_installed) {
             totwritten += nwritten;
 
             /* If we fully sent the object on head go to the next one */
+			/* list中某个节点的数据发送完成了，则删除节点，继续发下一个节点的数据 */
             if (c->sentlen == objlen) {
                 c->reply_bytes -= o->size;
                 listDelNode(c->reply,listFirst(c->reply));
                 c->sentlen = 0;
                 /* If there are no longer objects in the list, we expect
                  * the count of reply bytes to be exactly zero. */
+				/* 做一个校验 */
                 if (listLength(c->reply) == 0)
                     serverAssert(c->reply_bytes == 0);
             }
@@ -1302,6 +1330,12 @@ int writeToClient(client *c, int handler_installed) {
          * Moreover, we also send as much as possible if the client is
          * a slave (otherwise, on high-speed traffic, the replication
          * buffer will grow indefinitely) */
+		/*
+		 * 通常情况下，每次回复给客户端的数据是有上限，即NET_MAX_WRITES_PER_EVENT，
+		 * 除了下面两种情况是没有限制的：
+		 * 客户端是slave
+		 * 服务端内存使用有限制，并且使用达到上限了
+		 */
         if (totwritten > NET_MAX_WRITES_PER_EVENT &&
             (server.maxmemory == 0 ||
              zmalloc_used_memory() < server.maxmemory) &&
@@ -1309,6 +1343,7 @@ int writeToClient(client *c, int handler_installed) {
     }
     server.stat_net_output_bytes += totwritten;
     if (nwritten == -1) {
+		/* 一个字节数据都没有发送出去，检查状态 */
         if (connGetState(c->conn) == CONN_STATE_CONNECTED) {
             nwritten = 0;
         } else {
@@ -1331,9 +1366,13 @@ int writeToClient(client *c, int handler_installed) {
          * adDeleteFileEvent() is not thread safe: however writeToClient()
          * is always called with handler_installed set to 0 from threads
          * so we are fine. */
+		/* 如果是写事件回调函数sendReplyToClient调用这个接口，如果数据写完成了，
+		 * 则马上取消其事件回调函数，同时取消对其可写事件的监控 */
         if (handler_installed) connSetWriteHandler(c->conn, NULL);
 
         /* Close connection after entire reply has been sent. */
+		/* 数据发送完成了，发现设置了CLIENT_CLOSE_AFTER_REPLY flag，则释放连接，
+		 * QUIT命令就是这样的，设置这个flag */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
             freeClientAsync(c);
             return C_ERR;
@@ -1343,6 +1382,7 @@ int writeToClient(client *c, int handler_installed) {
 }
 
 /* Write event handler. Just send data to the client. */
+/* 客户端可写事件的响应函数 */
 void sendReplyToClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     writeToClient(c,1);
@@ -1352,6 +1392,12 @@ void sendReplyToClient(connection *conn) {
  * we can just write the replies to the client output buffer without any
  * need to use a syscall in order to install the writable event handler,
  * get it called, and so forth. */
+/*
+ * 这个函数主要被handleClientsWithPendingReadsUsingThreads调用，
+ * 即在每次进入事件循环前调用，目的是尽可能把要回复客户端数据发送出去，
+ * 同时不用设置可写事件的回调函数，从而避免一次系统调用,
+ * 当然如果这个接口没有把要回复客户端数据发送完，还是要设置写事件的回调函数的，避免不了了
+ */
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
@@ -1360,6 +1406,8 @@ int handleClientsWithPendingWrites(void) {
     listRewind(server.clients_pending_write,&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
+
+		/* 取消CLIENT_PENDING_WRITE标记，同时从队列里面删除 */
         c->flags &= ~CLIENT_PENDING_WRITE;
         listDelNode(server.clients_pending_write,ln);
 
@@ -1372,6 +1420,9 @@ int handleClientsWithPendingWrites(void) {
 
         /* If after the synchronous writes above we still have data to
          * output to the client, we need to install the writable handler. */
+		/*
+		 * 如果output buff中，还有数据没有写完，才设置监控可写事件以及对应的回调函数
+		 */
         if (clientHasPendingReplies(c)) {
             int ae_barrier = 0;
             /* For the fsync=always policy, we want that a given FD is never
@@ -2754,6 +2805,9 @@ int processEventsWhileBlocked(void) {
 /* ==========================================================================
  * Threaded I/O
  * ========================================================================== */
+/*
+ * 网络线程(用来读取客户端网络数据或者写客户端写数据)当前默认配置是没有开启的 
+ * /
 
 int tio_debug = 0;
 
@@ -2768,6 +2822,7 @@ int io_threads_active;  /* Are the threads currently spinning waiting I/O? */
 int io_threads_op;      /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 list *io_threads_list[IO_THREADS_MAX_NUM];
 
+/* 网络线程执行的函数，用于从客户端读取查询请求或者向网络写入数据 */
 void *IOThreadMain(void *myid) {
     /* The ID is the thread number (from 0 to server.iothreads_num-1), and is
      * used by the thread to just manipulate a single sub-array of clients. */
@@ -2878,6 +2933,7 @@ int stopThreadedIOIfNeeded(void) {
     int pending = listLength(server.clients_pending_write);
 
     /* Return ASAP if IO threads are disabled (single threaded mode). */
+	/* 当前默认配置server.io_threads_num为1，即关闭IO threads的 */
     if (server.io_threads_num == 1) return 1;
 
     if (pending < (server.io_threads_num*2)) {
@@ -2888,6 +2944,9 @@ int stopThreadedIOIfNeeded(void) {
     }
 }
 
+/*
+ * 这个接口在beforeSleep前调用，即调用多路复用接口前调用，在每次进入事件等待的操作前调用
+ */
 int handleClientsWithPendingWritesUsingThreads(void) {
     int processed = listLength(server.clients_pending_write);
     if (processed == 0) return 0; /* Return ASAP if there are no clients. */
@@ -2895,6 +2954,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     /* If we have just a few clients to serve, don't use I/O threads, but the
      * boring synchronous code. */
     if (stopThreadedIOIfNeeded()) {
+		/* 默认配置是走这个逻辑的 */
         return handleClientsWithPendingWrites();
     }
 
@@ -2955,6 +3015,9 @@ int handleClientsWithPendingWritesUsingThreads(void) {
  * This is called by the readable handler of the event loop.
  * As a side effect of calling this function the client is put in the
  * pending read clients and flagged as such. */
+/*
+ *
+ */
 int postponeClientRead(client *c) {
     if (io_threads_active &&
         server.io_threads_do_reads &&
@@ -2974,7 +3037,12 @@ int postponeClientRead(client *c) {
  * the queue using the I/O threads, and process them in order to accumulate
  * the reads in the buffers, and also parse the first command available
  * rendering it in the client structures. */
+/*
+ * 这个接口被afterSleep调用，即多路复用接口返回的时候调用
+ */
 int handleClientsWithPendingReadsUsingThreads(void) {
+	/* 当前默认配置io_threads_active 和 server.io_threads_do_reads 值都是 0，
+	 * 即默认不是开启网络线程的，server.io_threads_do_reads的值是读配置 io-threads-do-reads, */
     if (!io_threads_active || !server.io_threads_do_reads) return 0;
     int processed = listLength(server.clients_pending_read);
     if (processed == 0) return 0;
@@ -3000,6 +3068,9 @@ int handleClientsWithPendingReadsUsingThreads(void) {
         int count = listLength(io_threads_list[j]);
         io_threads_pending[j] = count;
     }
+	/* 
+	 * IO线程开始工作
+	 */
 
     /* Wait for all threads to end their work. */
     while(1) {
@@ -3009,6 +3080,10 @@ int handleClientsWithPendingReadsUsingThreads(void) {
         if (pending == 0) break;
     }
     if (tio_debug) printf("I/O READ All threads finshed\n");
+
+	/* 
+	 * IO线程开始结束，其他时间段IO线程都不工作的
+	 */
 
     /* Run the list of clients again to process the new buffers. */
     listRewind(server.clients_pending_read,&li);

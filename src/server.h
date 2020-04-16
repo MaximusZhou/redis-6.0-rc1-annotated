@@ -1020,6 +1020,7 @@ struct redisServer {
                                    is enabled. */
     int hz;                     /* serverCron() calls frequency in hertz */
     redisDb *db;
+	/* commands 保存所有redis命令实现信息 */
     dict *commands;             /* Command table */
     dict *orig_commands;        /* Command table before command renaming. */
     aeEventLoop *el;            /* 服务器启动的时候，保存接口aeCreateEventLoop的返回值 */
@@ -1061,6 +1062,7 @@ struct redisServer {
     list *clients;              /* List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
     list *clients_pending_write; /* There is to write or install handler. */
+	/* 客户端list，这个list里面的客户端网络上有数据还没有读取，登录IO线程去读取 */
     list *clients_pending_read;  /* Client has pending read socket buffers. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
@@ -1411,10 +1413,12 @@ typedef struct pubsubPattern {
 
 typedef void redisCommandProc(client *c);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
+
+/* 用来表示每个命令实现的配置 */
 struct redisCommand {
     char *name;
-    redisCommandProc *proc;
-    int arity;
+    redisCommandProc *proc; /* 命令相应的处理函数 */
+    int arity; /* 参数个数 */
     char *sflags;   /* Flags as string representation, one char per flag. */
     uint64_t flags; /* The actual flags, obtained from the 'sflags' field. */
     /* Use a function to determine keys arguments in a command line.

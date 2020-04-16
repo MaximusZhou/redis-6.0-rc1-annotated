@@ -178,7 +178,7 @@ volatile unsigned long lru_clock; /* Server global current LRU time. */
  *    specific data structures, such as: DEL, RENAME, MOVE, SELECT,
  *    TYPE, EXPIRE*, PEXPIRE*, TTL, PTTL, ...
  */
-
+ /* redis中所有的命令实现配置 */
 struct redisCommand redisCommandTable[] = {
     {"module",moduleCommand,-2,
      "admin no-script",
@@ -2942,6 +2942,7 @@ void InitServerLast() {
 /* Parse the flags string description 'strflags' and set them to the
  * command 'c'. If the flags are all valid C_OK is returned, otherwise
  * C_ERR is returned (yet the recognized flags are set in the command). */
+/* 把在redisCommandTable中定义的字符串flag转换为定义的宏的flag */
 int populateCommandTableParseFlags(struct redisCommand *c, char *strflags) {
     int argc;
     sds *argv;
@@ -3004,6 +3005,10 @@ int populateCommandTableParseFlags(struct redisCommand *c, char *strflags) {
 
 /* Populates the Redis Command Table starting from the hard coded list
  * we have on top of redis.c file. */
+/* 通过redisCommandTable 初始化server.commands 和 server.orig_commands,
+ * 即用来保存redis命令实现的相关信息
+ * 其中字段server.orig_commands初始化不会被修改，即使通过配置修改命令名字，这个字段也不会修改
+ * */
 void populateCommandTable(void) {
     int j;
     int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
