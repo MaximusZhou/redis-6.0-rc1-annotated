@@ -28,6 +28,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * 这个包括的接口，主要功能有：
+ * . 创建和释放各种类型的object的接口，比如createStringObject、freeStreamObject
+ * . 从redisObject中获取真正其值的接口，比如getLongLongFromObject
+ */
+
 #include "server.h"
 #include <math.h>
 #include <ctype.h>
@@ -81,6 +87,7 @@ robj *createRawStringObject(const char *ptr, size_t len) {
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
+/* robj结构体内存后面紧跟保存字符串相关的信息，并且这些字符串信息不可修改的 */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
     struct sdshdr8 *sh = (void*)(o+1);
@@ -115,6 +122,11 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
  *
  * The current limit of 44 is chosen so that the biggest string object
  * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc. */
+/* 
+ * 字符串长度小于等于44，字符串就用 OBJ_ENCODING_EMBSTR 来表示，
+ * 大于的话，则使用 RAW 的方式来表示，设置为44的原因是跟jemalloc相关，即
+ * 64 - sizeof(robj) - sizeof(sdshdr8) = 44
+ */
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 robj *createStringObject(const char *ptr, size_t len) {
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
@@ -130,6 +142,9 @@ robj *createStringObject(const char *ptr, size_t len) {
  * integer, because the object is going to be used as value in the Redis key
  * space (for instance when the INCR command is used), so we want LFU/LRU
  * values specific for each key. */
+/*
+ * valueobj为1，表示要创建的object是用于value的，则不使用 shared integers
+ */
 robj *createStringObjectFromLongLongWithOptions(long long value, int valueobj) {
     robj *o;
 
@@ -138,14 +153,21 @@ robj *createStringObjectFromLongLongWithOptions(long long value, int valueobj) {
     {
         /* If the maxmemory policy permits, we can still return shared integers
          * even if valueobj is true. */
+		/* 如果没有内存限制，则不管valueobj的参数的值，都使用 shared integers */
         valueobj = 0;
     }
 
     if (value >= 0 && value < OBJ_SHARED_INTEGERS && valueobj == 0) {
+		/* 小于OBJ_SHARED_INTEGERS，即10000的值的整数，直接使用共享的对象
+		 * 这些int类型对象，对外是OBJ_STRING类型，其子类型，即实现编码是 OBJ_ENCODING_INT
+		 * */
         incrRefCount(shared.integers[value]);
         o = shared.integers[value];
     } else {
         if (value >= LONG_MIN && value <= LONG_MAX) {
+			/* 能用long表示的值，则用OBJ_ENCODING_INT来表示，否则直接用字符串保存，
+			 * 采用OBJ_ENCODING_INT方式实现，实质就是把int值保存在指针字段里面
+			 * */
             o = createObject(OBJ_STRING, NULL);
             o->encoding = OBJ_ENCODING_INT;
             o->ptr = (void*)((long)value);
@@ -190,11 +212,14 @@ robj *createStringObjectFromLongDouble(long double value, int humanfriendly) {
  * will always result in a fresh object that is unshared (refcount == 1).
  *
  * The resulting object always has refcount set to 1. */
+/* 拷贝一个string object，就算原来是share integers，也会创建一个全新的，
+ * 也就是说，不管o是怎么样，返回的robj，其肯定不是共享的 */
 robj *dupStringObject(const robj *o) {
     robj *d;
 
     serverAssert(o->type == OBJ_STRING);
 
+	/* 实质从这里也可以看出字符串有三种实现方式 */
     switch(o->encoding) {
     case OBJ_ENCODING_RAW:
         return createRawStringObject(o->ptr,sdslen(o->ptr));
@@ -680,6 +705,7 @@ int getLongDoubleFromObjectOrReply(client *c, robj *o, long double *target, cons
     return C_OK;
 }
 
+/* 把robj保存的值，转换为long long型保存到参数target中 */
 int getLongLongFromObject(robj *o, long long *target) {
     long long value;
 
@@ -699,6 +725,7 @@ int getLongLongFromObject(robj *o, long long *target) {
     return C_OK;
 }
 
+/* 把robj保存的值，转换为long long型保存到参数target中 */
 int getLongLongFromObjectOrReply(client *c, robj *o, long long *target, const char *msg) {
     long long value;
     if (getLongLongFromObject(o, &value) != C_OK) {

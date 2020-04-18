@@ -357,6 +357,7 @@ typedef long long ustime_t; /* microsecond time type. */
 /* Redis maxmemory strategies. Instead of using just incremental number
  * for this defines, we use a set of flags so that testing for certain
  * properties common to multiple policies is faster. */
+/* 在内存达到上限的时候，redis 删除key的策略 */
 #define MAXMEMORY_FLAG_LRU (1<<0)
 #define MAXMEMORY_FLAG_LFU (1<<1)
 #define MAXMEMORY_FLAG_ALLKEYS (1<<2)
@@ -370,7 +371,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #define MAXMEMORY_ALLKEYS_LRU ((4<<8)|MAXMEMORY_FLAG_LRU|MAXMEMORY_FLAG_ALLKEYS)
 #define MAXMEMORY_ALLKEYS_LFU ((5<<8)|MAXMEMORY_FLAG_LFU|MAXMEMORY_FLAG_ALLKEYS)
 #define MAXMEMORY_ALLKEYS_RANDOM ((6<<8)|MAXMEMORY_FLAG_ALLKEYS)
-#define MAXMEMORY_NO_EVICTION (7<<8)
+#define MAXMEMORY_NO_EVICTION (7<<8) /* */
 
 /* Units */
 #define UNIT_SECONDS 0
@@ -437,6 +438,7 @@ typedef long long ustime_t; /* microsecond time type. */
 /* A redis object, that is a type able to hold a string / list / set */
 
 /* The actual Redis Object */
+/* redis中实现的数据类型 */
 #define OBJ_STRING 0    /* String object. */
 #define OBJ_LIST 1      /* List object. */
 #define OBJ_SET 2       /* Set object. */
@@ -573,6 +575,8 @@ typedef struct RedisModuleDigest {
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
  * is set to one of this fields for this object. */
+
+/* 一些数据类型在不同的情况下用不同的方式来实现，下面这些宏才是真正的底层实现方式 */
 #define OBJ_ENCODING_RAW 0     /* Raw representation */
 #define OBJ_ENCODING_INT 1     /* Encoded as integer */
 #define OBJ_ENCODING_HT 2      /* Encoded as hash table */
@@ -587,12 +591,19 @@ typedef struct RedisModuleDigest {
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1<<LRU_BITS)-1) /* Max value of obj->lru */
+/* LRU clock 的精度是秒 */
 #define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
 
 #define OBJ_SHARED_REFCOUNT INT_MAX
+/* 用来表示redis任何的数据类型，
+ * 通常使用接口createObject来创建 */
 typedef struct redisObject {
-    unsigned type:4;
+    unsigned type:4; /* 值类似为OBJ_STRING */
+
+	/* 实质就是类型进一步区分，比如OBJ_HASH在实现的时候，根据不同的情况，底层数据结构是不一样的*/
     unsigned encoding:4;
+
+	/* 保存最近使用的时间（相对时间），或者是最近使用的次数（针对有内置内存上限的情况）*/
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
@@ -1300,6 +1311,7 @@ struct redisServer {
     /* Limits */
     unsigned int maxclients;            /* Max number of simultaneous clients */
     unsigned long long maxmemory;   /* Max number of memory bytes to use */
+	/* 当内存达到上限的时候，选择要删除的key策略，默认值是MAXMEMORY_NO_EVICTION */
     int maxmemory_policy;           /* Policy for key eviction */
     int maxmemory_samples;          /* Pricision of random sampling */
     int lfu_log_factor;             /* LFU logarithmic counter factor. */

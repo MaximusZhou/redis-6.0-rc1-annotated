@@ -78,8 +78,11 @@ unsigned int getLRUClock(void) {
 unsigned int LRU_CLOCK(void) {
     unsigned int lruclock;
     if (1000/server.hz <= LRU_CLOCK_RESOLUTION) {
+		/* 如果系统更新频率比要求的更快，直接用系统缓存就可以了，没必要额外一次系统调用了，
+		 * 实质生成环境中，通常就是这种情况*/
         lruclock = server.lruclock;
     } else {
+		/* 直接系统调用获取 */
         lruclock = getLRUClock();
     }
     return lruclock;

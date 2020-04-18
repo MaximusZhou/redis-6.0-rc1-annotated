@@ -58,6 +58,9 @@
 
 /* Our shared "common" objects */
 
+/* 保存redis用于全局共享的数据对象，比如小的int，在redis就保存一份
+ * 这全局变量在接口createSharedObjects 中初始化的，即服务器启动时候，就初始化了,
+ * */
 struct sharedObjectsStruct shared;
 
 /* Global vars that are actually used as constants. The following double
@@ -1837,7 +1840,8 @@ void checkChildrenDone(void) {
  * a macro is used: run_with_period(milliseconds) { .... }
  */
 
-/* 系统每1000/server.hz ms调用这个接口一次，即一秒调用这个接口server.hz次，
+/* 系统每1000/server.hz ms调用这个接口一次，即一秒调用这个接口server.hz次，默认是10次
+ * 即可以认为redis的tick大小为100ms,
  * 服务器在启动后，1ms后调用这个接口，
  * 在这个接口中，做了大量可以异步后台做的工作
  * 比如，关闭超时的客户端、清除过期的key等工作
