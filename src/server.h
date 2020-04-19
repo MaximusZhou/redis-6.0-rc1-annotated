@@ -639,6 +639,9 @@ typedef struct clientReplyBlock {
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
+/* 
+ * 用来表示一个redis db
+ * */
 typedef struct redisDb {
     dict *dict;                 /* The keyspace for this DB */
     dict *expires;              /* Timeout of keys with a timeout set */
@@ -766,6 +769,7 @@ typedef struct user {
 typedef struct client {
     uint64_t id;            /* Client incremental unique ID. */
     connection *conn;
+	/* 用来保存RESP通信协议的版本，默认值是2 */
     int resp;               /* RESP protocol version. Can be 2 or 3. */
     redisDb *db;            /* Pointer to currently SELECTed DB. */
     robj *name;             /* As set by CLIENT SETNAME. */
@@ -1077,6 +1081,7 @@ struct redisServer {
     list *clients_pending_read;  /* Client has pending read socket buffers. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
+	/* 如果大于0的时候，检查key是否过期，使用server.mstime字段 */
     long fixed_time_expire;     /* If > 0, expire keys against server.mstime. */
     rax *clients_index;         /* Active clients dictionary by client ID. */
     int clients_paused;         /* True if clients are currently paused */
@@ -1396,7 +1401,7 @@ struct redisServer {
     int lua_always_replicate_commands; /* Default replication type. */
     /* Lazy free */
     int lazyfree_lazy_eviction;
-    int lazyfree_lazy_expire;
+    int lazyfree_lazy_expire; /* key过期的时候，是马上删除key，还是异步删除，默认值是0 */
     int lazyfree_lazy_server_del;
     /* Latency monitor */
     long long latency_monitor_threshold;
@@ -2049,7 +2054,7 @@ robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply);
 int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle,
                        long long lru_clock, int lru_multiplier);
 #define LOOKUP_NONE 0
-#define LOOKUP_NOTOUCH (1<<0)
+#define LOOKUP_NOTOUCH (1<<0) /* 表示查找到key，不更新对应的lru字段 */
 void dbAdd(redisDb *db, robj *key, robj *val);
 void dbOverwrite(redisDb *db, robj *key, robj *val);
 void genericSetKey(redisDb *db, robj *key, robj *val, int keepttl);

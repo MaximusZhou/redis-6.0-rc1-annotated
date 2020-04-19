@@ -116,7 +116,7 @@ client *createClient(connection *conn) {
     selectDb(c,0); /* 默认选择的是0号db */
     uint64_t client_id = ++server.next_client_id;
     c->id = client_id;
-    c->resp = 2;
+    c->resp = 2; /* 用来保存通信的RESP协议的版本 */
     c->conn = conn;
     c->name = NULL;
     c->bufpos = 0;
@@ -688,6 +688,7 @@ void addReplyBulkLen(client *c, robj *obj) {
 }
 
 /* Add a Redis Object as a bulk reply */
+/* 以BULK的数据方式，发送到客户端 */
 void addReplyBulk(client *c, robj *obj) {
     addReplyBulkLen(c,obj);
     addReply(c,obj);

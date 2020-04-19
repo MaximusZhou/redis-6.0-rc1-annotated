@@ -27,6 +27,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * 本模块实现字符相关的命令，比如 get set
+ */
+
 #include "server.h"
 #include <math.h> /* isnan(), isinf() */
 
@@ -65,9 +69,12 @@ static int checkStringLength(client *c, long long size) {
 #define OBJ_SET_PX (1<<3)          /* Set if time in ms in given */
 #define OBJ_SET_KEEPTTL (1<<4)     /* Set and keep the ttl */
 
+/* 真正实现set相关命令的接口，
+ * 参数flags不同的值，有不同的行为 */
 void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
     long long milliseconds = 0; /* initialized to avoid any harmness warning */
 
+	/* 把参数expire转换为对应的long long值*/
     if (expire) {
         if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK)
             return;
@@ -78,6 +85,10 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
         if (unit == UNIT_SECONDS) milliseconds *= 1000;
     }
 
+	/*
+	 * OBJ_SET_NX: key不存在才设置；
+	 * OBJ_SET_XX: key存在才设置
+	 */
     if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
         (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
     {
@@ -94,6 +105,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
 }
 
 /* SET key value [NX] [XX] [KEEPTTL] [EX <seconds>] [PX <milliseconds>] */
+/* 命令set对应实现的接口 */
 void setCommand(client *c) {
     int j;
     robj *expire = NULL;
@@ -176,6 +188,7 @@ int getGenericCommand(client *c) {
     }
 }
 
+/* get命令实现函数入口 */
 void getCommand(client *c) {
     getGenericCommand(c);
 }

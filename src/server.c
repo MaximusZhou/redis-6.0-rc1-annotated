@@ -2219,6 +2219,7 @@ void createSharedObjects(void) {
     shared.plus = createObject(OBJ_STRING,sdsnew("+"));
 
     /* The shared NULL depends on the protocol version. */
+	/* 回复命令内容为NULL的时候，返回的值，下标表示RESP协议的版本 */
     shared.null[0] = NULL;
     shared.null[1] = NULL;
     shared.null[2] = createObject(OBJ_STRING,sdsnew("$-1\r\n"));
@@ -3232,6 +3233,7 @@ void call(client *c, int flags) {
     int client_old_flags = c->flags;
     struct redisCommand *real_cmd = c->cmd;
 
+	/* 执行命令时候，用缓存的时间 */
     server.fixed_time_expire++;
 
     /* Sent the command to clients in MONITOR mode, only if the commands are
@@ -3251,6 +3253,7 @@ void call(client *c, int flags) {
 
     /* Call the command. */
     dirty = server.dirty;
+	/* 执行命令前，更新一下时间缓存，执行命令用缓存的时间 */
     updateCachedTime(0);
     start = server.ustime;
     c->cmd->proc(c);
