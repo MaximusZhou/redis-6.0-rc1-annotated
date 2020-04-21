@@ -519,6 +519,8 @@ try_fsync:
     }
 }
 
+/* 把操作命令和参数转换为字符串，保存到dst中，字符串的格式是REPL协议格式，
+ * 感觉这个地方实现可以优化，一直累加这种操作，还是有开销的 */
 sds catAppendOnlyGenericCommand(sds dst, int argc, robj **argv) {
     char buf[32];
     int len, j;
@@ -551,6 +553,9 @@ sds catAppendOnlyGenericCommand(sds dst, int argc, robj **argv) {
  * This command is used in order to translate EXPIRE and PEXPIRE commands
  * into PEXPIREAT command so that we retain precision in the append only
  * file, and the time is always absolute and not relative. */
+/* 
+ * EXPIRE/PEXPIRE/EXPIREAT 都转换为 PEXPIREAT 来表示保存，就最后记录的key过期时间是绝对时间
+ * */
 sds catAppendOnlyExpireAtCommand(sds buf, struct redisCommand *cmd, robj *key, robj *seconds) {
     long long when;
     robj *argv[3];
@@ -581,12 +586,14 @@ sds catAppendOnlyExpireAtCommand(sds buf, struct redisCommand *cmd, robj *key, r
     return buf;
 }
 
+/* 记录相关的操作，即向aof_buf中写入数据，通常是有修改db数据的操作才记录 */
 void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc) {
     sds buf = sdsempty();
     robj *tmpargv[3];
 
     /* The DB this command was targeting is not the same as the last command
      * we appended. To issue a SELECT command is needed. */
+	/* 操作的db与最近操作的db，不是同一个，自动记录一个SELECT操作 */
     if (dictid != server.aof_selected_db) {
         char seldb[64];
 
@@ -596,6 +603,7 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         server.aof_selected_db = dictid;
     }
 
+	/* 把不同类型的命令用不同的方法转换为字符串保存，即用一个字符串表示这个操作 */
     if (cmd->proc == expireCommand || cmd->proc == pexpireCommand ||
         cmd->proc == expireatCommand) {
         /* Translate EXPIRE/PEXPIRE/EXPIREAT into PEXPIREAT */
@@ -634,6 +642,10 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
     /* Append to the AOF buffer. This will be flushed on disk just before
      * of re-entering the event loop, so before the client will get a
      * positive reply about the operation performed. */
+	/* 把操作记录放到aof_buf中，等待在事件循环前才尝试写到磁盘上，
+	 * 即在接口beforeSleep中，会调用接口flushAppendOnlyFile
+	 * 通过flushAppendOnlyFile把数据写到磁盘上，当然flushAppendOnlyFile接口也
+	 * 可能在其他地方调用，比如serverCron接口中 */
     if (server.aof_state == AOF_ON)
         server.aof_buf = sdscatlen(server.aof_buf,buf,sdslen(buf));
 
@@ -641,6 +653,9 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
      * accumulate the differences between the child DB and the current one
      * in a buffer, so that when the child process will do its work we
      * can append the differences to the new append only file. */
+	/*
+	 * 
+	 */
     if (server.aof_child_pid != -1)
         aofRewriteBufferAppend((unsigned char*)buf,sdslen(buf));
 
@@ -1299,6 +1314,9 @@ ssize_t aofReadDiffFromParent(void) {
     return total;
 }
 
+/* 
+ * 把db数据写到磁盘上，创建当前db的dump
+ */
 int rewriteAppendOnlyFileRio(rio *aof) {
     dictIterator *di = NULL;
     dictEntry *de;
@@ -1759,6 +1777,7 @@ void backgroundRewriteDoneHandler(int exitcode, int bysignal) {
         } else {
             /* AOF enabled, replace the old fd with the new one. */
             oldfd = server.aof_fd;
+			/* 用新的文件保存后面的操作记录 */
             server.aof_fd = newfd;
             if (server.aof_fsync == AOF_FSYNC_ALWAYS)
                 redis_fsync(newfd);

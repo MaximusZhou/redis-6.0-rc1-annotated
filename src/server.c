@@ -3128,6 +3128,9 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  * This should not be used inside commands implementation. Use instead
  * alsoPropagate(), preventCommandPropagation(), forceCommandPropagation().
  */
+/*
+ * 把需要同步的命令操作同步到AOF和副本
+ */
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {
@@ -3227,13 +3230,14 @@ void preventCommandReplication(client *c) {
  * preventCommandReplication(client *c);
  *
  */
+/* 执行redis命令的总的入口，执行收到客户端命令的时候，flags值为 CMD_CALL_FULL */
 void call(client *c, int flags) {
     long long dirty;
     ustime_t start, duration;
     int client_old_flags = c->flags;
     struct redisCommand *real_cmd = c->cmd;
 
-	/* 执行命令时候，用缓存的时间 */
+	/* 执行命令时候，用缓存的时间，并且检测key是否过期，就用缓存的时间 */
     server.fixed_time_expire++;
 
     /* Sent the command to clients in MONITOR mode, only if the commands are
@@ -3281,7 +3285,10 @@ void call(client *c, int flags) {
     if (flags & CMD_CALL_SLOWLOG && !(c->cmd->flags & CMD_SKIP_SLOWLOG)) {
         char *latency_event = (c->cmd->flags & CMD_FAST) ?
                               "fast-command" : "command";
+		/* 统计信息，供命令查询 */
         latencyAddSampleIfNeeded(latency_event,duration/1000);
+
+		/* 增加slowlog */
         slowlogPushEntryIfNeeded(c,c->argv,c->argc,duration);
     }
 
@@ -3294,6 +3301,7 @@ void call(client *c, int flags) {
     }
 
     /* Propagate the command into the AOF and replication link */
+	/* 把命令执行同步到 AOF和副本 中*/
     if (flags & CMD_CALL_PROPAGATE &&
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP)
     {
@@ -3301,16 +3309,19 @@ void call(client *c, int flags) {
 
         /* Check if the command operated changes in the data set. If so
          * set for replication / AOF propagation. */
+		/* 有修改数据库数据的操作，才同步到AOF和副本中，比如查询命令，当然不需要*/
         if (dirty) propagate_flags |= (PROPAGATE_AOF|PROPAGATE_REPL);
 
         /* If the client forced AOF / replication of the command, set
          * the flags regardless of the command effects on the data set. */
+		/* 客户端标记强制同步 */
         if (c->flags & CLIENT_FORCE_REPL) propagate_flags |= PROPAGATE_REPL;
         if (c->flags & CLIENT_FORCE_AOF) propagate_flags |= PROPAGATE_AOF;
 
         /* However prevent AOF / replication propagation if the command
          * implementations called preventCommandPropagation() or similar,
          * or if we don't have the call() flags to do so. */
+		/* 客户端标记强制不能同步操作，或者参数flags要求不同步 */
         if (c->flags & CLIENT_PREVENT_REPL_PROP ||
             !(flags & CMD_CALL_PROPAGATE_REPL))
                 propagate_flags &= ~PROPAGATE_REPL;

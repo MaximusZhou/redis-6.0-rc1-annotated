@@ -1169,8 +1169,15 @@ struct redisServer {
     int daemonize;                  /* True if running as a daemon */
     clientBufferLimitsConfig client_obuf_limits[CLIENT_TYPE_OBUF_COUNT];
     /* AOF persistence */
+	/* 是否开启AOF，由redis.conf中 appendonly决定的 */
     int aof_enabled;                /* AOF configuration */
+	/* 如果aof_enabled值为1，该字段初始值为 AOF_ON */
     int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */
+	/* 由appendfsync配置决定，即调用fsync的模式，
+	 * AOF_FSYNC_NO 不调用fsync，由操作系统自检flush数据到磁盘上
+	 * AOF_FSYNC_ALWAYS 每次写append log，都调用fysnc，安全但是慢
+	 * AOF_FSYNC_EVERYSEC 每秒只调用一次fsync，默认是这种折中的方案
+	 * */
     int aof_fsync;                  /* Kind of fsync() policy */
     char *aof_filename;             /* Name of the AOF file */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
@@ -1209,6 +1216,7 @@ struct redisServer {
                                       to child process. */
     sds aof_child_diff;             /* AOF diff accumulator child side. */
     /* RDB persistence */
+	/* 执行命令的时候，用来记录命令是否修改db，如果修改了，则dirty++ */
     long long dirty;                /* Changes to DB from the last save */
     long long dirty_before_bgsave;  /* Used to restore dirty on failed BGSAVE */
     pid_t rdb_child_pid;            /* PID of RDB saving child */

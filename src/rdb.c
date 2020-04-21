@@ -1150,6 +1150,9 @@ ssize_t rdbSaveSingleModuleAux(rio *rdb, int when, moduleType *mt) {
  * When the function returns C_ERR and if 'error' is not NULL, the
  * integer pointed by 'error' is set to the value of errno just after the I/O
  * error. */
+/* 
+ * 把db数据写到磁盘上，创建当前db的dump
+ */
 int rdbSaveRio(rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi) {
     dictIterator *di = NULL;
     dictEntry *de;

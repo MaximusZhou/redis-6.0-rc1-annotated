@@ -124,10 +124,12 @@ void slowlogInit(void) {
 void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
     if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
     if (duration >= server.slowlog_log_slower_than)
+		/* 用双链表来保存slowlog的 */
         listAddNodeHead(server.slowlog,
                         slowlogCreateEntry(c,argv,argc,duration));
 
     /* Remove old entries if needed. */
+	/* 记录的slowlog长度有上限，超过了，则截断 */
     while (listLength(server.slowlog) > server.slowlog_max_len)
         listDelNode(server.slowlog,listLast(server.slowlog));
 }
