@@ -1206,10 +1206,10 @@ struct redisServer {
     int aof_load_truncated;         /* Don't stop on unexpected AOF EOF. */
     int aof_use_rdb_preamble;       /* Use RDB preamble on AOF rewrites. */
     /* AOF pipes used to communicate between parent and child during rewrite. */
-    int aof_pipe_write_data_to_child;
-    int aof_pipe_read_data_from_parent;
-    int aof_pipe_write_ack_to_parent;
-    int aof_pipe_read_ack_from_child;
+    int aof_pipe_write_data_to_child; /* 用在父进程，通过这个fd向子进程发送数据 */
+    int aof_pipe_read_data_from_parent; /* 用在子进程，通过这个fd读取父进程发过来的数据 */
+    int aof_pipe_write_ack_to_parent; /* 用在子进程，通过这个fd向父进程发送的数据 */
+    int aof_pipe_read_ack_from_child; /* 用在父进程，通过这个fd读取从子进程发送过来的数据 */
     int aof_pipe_write_ack_to_child;
     int aof_pipe_read_ack_from_parent;
     int aof_stop_sending_diff;     /* If true stop sending accumulated diffs
