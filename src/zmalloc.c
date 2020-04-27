@@ -28,6 +28,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* 通过zmalloc.c 和 zmalloc.h 可以看到对不同的内存分配器封装实现 */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -36,6 +38,7 @@
  * for instance to free results obtained by backtrace_symbols(). We need
  * to define this function before including zmalloc.h that may shadow the
  * free implementation if we use jemalloc or another non standard allocator. */
+/* libc 的free函数，放在最前面实现，担心free被重新定义了 */
 void zlibc_free(void *ptr) {
     free(ptr);
 }
@@ -47,9 +50,12 @@ void zlibc_free(void *ptr) {
 #include "atomicvar.h"
 
 #ifdef HAVE_MALLOC_SIZE
+/* 默认走的这个分支 */
 #define PREFIX_SIZE (0)
 #else
 #if defined(__sun) || defined(__sparc) || defined(__sparc__)
+/* 如果内存分配器，没有提供通过指针返回内存快大小的接口，
+ * 即分配内存的时候，额外分配一个PREFIX_SIZE大小的内存，用于保存分配的内存大小 */
 #define PREFIX_SIZE (sizeof(long long))
 #else
 #define PREFIX_SIZE (sizeof(size_t))
@@ -63,6 +69,7 @@ void zlibc_free(void *ptr) {
 #define realloc(ptr,size) tc_realloc(ptr,size)
 #define free(ptr) tc_free(ptr)
 #elif defined(USE_JEMALLOC)
+/* 根据Makefile x86-64 Linux用的是这种内存分配器 */
 #define malloc(size) je_malloc(size)
 #define calloc(count,size) je_calloc(count,size)
 #define realloc(ptr,size) je_realloc(ptr,size)
@@ -74,6 +81,8 @@ void zlibc_free(void *ptr) {
 #define update_zmalloc_stat_alloc(__n) do { \
     size_t _n = (__n); \
     if (_n&(sizeof(long)-1)) _n += sizeof(long)-(_n&(sizeof(long)-1)); \
+	/* TODOQUES 这个地方感觉不对，应该传入__n，是假定所有的内存分配器，
+	   分配的内存大小都是sizeof(long) 的整数倍 */
     atomicIncr(used_memory,__n); \
 } while(0)
 
@@ -95,6 +104,7 @@ static void zmalloc_default_oom(size_t size) {
 
 static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
+/* 其他模块分配内存调用的接口 */
 void *zmalloc(size_t size) {
     void *ptr = malloc(size+PREFIX_SIZE);
 
@@ -103,6 +113,7 @@ void *zmalloc(size_t size) {
     update_zmalloc_stat_alloc(zmalloc_size(ptr));
     return ptr;
 #else
+	/* 没有提供通过指针获取内存大小的内存分配器，则接口自己把这个大小保存到分配的内存最前面 */
     *((size_t*)ptr) = size;
     update_zmalloc_stat_alloc(size+PREFIX_SIZE);
     return (char*)ptr+PREFIX_SIZE;
@@ -112,6 +123,9 @@ void *zmalloc(size_t size) {
 /* Allocation and free functions that bypass the thread cache
  * and go straight to the allocator arena bins.
  * Currently implemented only for jemalloc. Used for online defragmentation. */
+/*
+ * 当前宏HAVE_DEFRAG只在内存分配器为jemalloc有定义，即接口直接分配内存，而不用内部的cache
+ */
 #ifdef HAVE_DEFRAG
 void *zmalloc_no_tcache(size_t size) {
     void *ptr = mallocx(size+PREFIX_SIZE, MALLOCX_TCACHE_NONE);
@@ -177,12 +191,15 @@ void *zrealloc(void *ptr, size_t size) {
 /* Provide zmalloc_size() for systems where this function is not provided by
  * malloc itself, given that in that case we store a header with this
  * information as the first bytes of every allocation. */
+/* 针对内存分配器没有提供zmalloc_size和zmalloc_usable使用，
+ * jemalloc是有提供的，即je_malloc_usable_size  */
 #ifndef HAVE_MALLOC_SIZE
 size_t zmalloc_size(void *ptr) {
     void *realptr = (char*)ptr-PREFIX_SIZE;
     size_t size = *((size_t*)realptr);
     /* Assume at least that all the allocations are padded at sizeof(long) by
      * the underlying allocator. */
+	/* 分配的内存大小，必须是sizeof(long)整数陪 */
     if (size&(sizeof(long)-1)) size += sizeof(long)-(size&(sizeof(long)-1));
     return size+PREFIX_SIZE;
 }
@@ -237,12 +254,15 @@ void zmalloc_set_oom_handler(void (*oom_handler)(size_t)) {
  * function RedisEstimateRSS() that is a much faster (and less precise)
  * version of the function. */
 
+/* 在linux下，是有定义HAVE_PROC_STAT宏的，在config.c可以看到 */
 #if defined(HAVE_PROC_STAT)
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
+/* 通过/proc/pid/stat 第24 列，获取内存占用的内存大小，
+ * 注意这个接口是比较耗的，不能频繁调用的 */
 size_t zmalloc_get_rss(void) {
     int page = sysconf(_SC_PAGESIZE);
     size_t rss;
@@ -327,6 +347,8 @@ size_t zmalloc_get_rss(void) {
 
 #if defined(USE_JEMALLOC)
 
+/* 控制jemalloc内存分配器相关的接口 */
+
 int zmalloc_get_allocator_info(size_t *allocated,
                                size_t *active,
                                size_t *resident) {
@@ -406,6 +428,7 @@ int jemalloc_purge() {
  *
  * Example: zmalloc_get_smap_bytes_by_field("Rss:",-1);
  */
+/* 获取/proc/pid/smaps中的信息，linux在是有定义 HAVE_PROC_SMAPS宏的 */
 #if defined(HAVE_PROC_SMAPS)
 size_t zmalloc_get_smap_bytes_by_field(char *field, long pid) {
     char line[1024];
@@ -480,6 +503,7 @@ size_t zmalloc_get_private_dirty(long pid) {
  * 3) Was modified for Redis by Matt Stancliff.
  * 4) This note exists in order to comply with the original license.
  */
+/* 跨平台的方式，获取物理内存大小 */
 size_t zmalloc_get_memory_size(void) {
 #if defined(__unix__) || defined(__unix) || defined(unix) || \
     (defined(__APPLE__) && defined(__MACH__))

@@ -32,6 +32,7 @@
 #define __ZMALLOC_H
 
 /* Double expansion needed for stringification of macro values. */
+/* 这种使用方式，参考 https://gcc.gnu.org/onlinedocs/cpp/Stringizing.html#Stringizing */
 #define __xstr(s) __str(s)
 #define __str(s) #s
 
@@ -47,9 +48,9 @@
 
 #elif defined(USE_JEMALLOC)
 #define ZMALLOC_LIB ("jemalloc-" __xstr(JEMALLOC_VERSION_MAJOR) "." __xstr(JEMALLOC_VERSION_MINOR) "." __xstr(JEMALLOC_VERSION_BUGFIX))
-#include <jemalloc/jemalloc.h>
+#include <jemalloc/jemalloc.h> /* 在deps/jemalloc/include/jemalloc/jemalloc.h中 */
 #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)
-#define HAVE_MALLOC_SIZE 1
+#define HAVE_MALLOC_SIZE 1  /* 当前是有定义的 */
 #define zmalloc_size(p) je_malloc_usable_size(p)
 #else
 #error "Newer version of jemalloc required"
@@ -74,7 +75,7 @@
  * and the version used is our special version modified for Redis having
  * the ability to return per-allocation fragmentation hints. */
 #if defined(USE_JEMALLOC) && defined(JEMALLOC_FRAG_HINT)
-#define HAVE_DEFRAG
+#define HAVE_DEFRAG /* 当前帮是有定义这个宏的，JEMALLOC_FRAG_HINT在jemalloc/jemalloc.h中定义的 */
 #endif
 
 void *zmalloc(size_t size);
@@ -94,6 +95,7 @@ size_t zmalloc_get_memory_size(void);
 void zlibc_free(void *ptr);
 
 #ifdef HAVE_DEFRAG
+/* HAVE_DEFRAG 当前有定义的 */
 void zfree_no_tcache(void *ptr);
 void *zmalloc_no_tcache(size_t size);
 #endif
@@ -102,6 +104,7 @@ void *zmalloc_no_tcache(size_t size);
 size_t zmalloc_size(void *ptr);
 size_t zmalloc_usable(void *ptr);
 #else
+/* 走的这个逻辑，HAVE_MALLOC_SIZE有定义的 */
 #define zmalloc_usable(p) zmalloc_size(p)
 #endif
 

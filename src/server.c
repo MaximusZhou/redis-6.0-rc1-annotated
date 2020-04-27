@@ -4940,6 +4940,7 @@ int main(int argc, char **argv) {
     struct timeval tv;
     int j;
 
+/* 通过宏REDIS_TEST来做一些模块测试 */
 #ifdef REDIS_TEST
     if (argc == 3 && !strcasecmp(argv[1], "test")) {
         if (!strcasecmp(argv[2], "ziplist")) {

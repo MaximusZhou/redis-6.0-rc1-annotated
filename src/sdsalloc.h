@@ -35,6 +35,9 @@
  * Just define the following defines to what you want to use. Also add
  * the include of your alternate allocator if needed (not needed in order
  * to use the default libc allocator). */
+/*
+ * 可以通过修改s_malloc等宏的定义，给字符串用不同的内存分配器
+ */
 
 #include "zmalloc.h"
 #define s_malloc zmalloc

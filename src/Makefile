@@ -38,6 +38,8 @@ PKG_CONFIG?=pkg-config
 MALLOC=libc
 ifneq ($(uname_M),armv6l)
 ifneq ($(uname_M),armv7l)
+
+# x86_64 linux下用的是jemalloc作为分配器
 ifeq ($(uname_S),Linux)
 	MALLOC=jemalloc
 endif
