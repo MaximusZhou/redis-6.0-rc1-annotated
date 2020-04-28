@@ -42,14 +42,19 @@ const char *SDS_NOINIT;
 
 typedef char *sds;
 
+/* __attribute__ ((__packed__)) gcc语法，目的是为了尽可能减少成员内存使用，不需要align和padding */
+
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings. */
 struct __attribute__ ((__packed__)) sdshdr5 {
+	/* flags低三个bit保存类型，最高的5个bit保存长度 */
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
     char buf[];
 };
 struct __attribute__ ((__packed__)) sdshdr8 {
+	/* 已经使用的空间大小，即保存的字符个数，不包括null */
     uint8_t len; /* used */
+	/* 分配的总的空间，即真正存放字符的空间大小，不包括null和结构体大小 */
     uint8_t alloc; /* excluding the header and null terminator */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
     char buf[];
@@ -69,6 +74,7 @@ struct __attribute__ ((__packed__)) sdshdr32 {
 struct __attribute__ ((__packed__)) sdshdr64 {
     uint64_t len; /* used */
     uint64_t alloc; /* excluding the header and null terminator */
+	/* flags低三个bit保存类型 */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
     char buf[];
 };
@@ -80,10 +86,12 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 #define SDS_TYPE_64 4
 #define SDS_TYPE_MASK 7
 #define SDS_TYPE_BITS 3
+/* SDS_HDR_VAR 计算header结构体的指针位置，并且赋值给sh，即struct header */
 #define SDS_HDR_VAR(T,s) struct sdshdr##T *sh = (void*)((s)-(sizeof(struct sdshdr##T)));
 #define SDS_HDR(T,s) ((struct sdshdr##T *)((s)-(sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f)>>SDS_TYPE_BITS)
 
+/* sds实质就是char*类型，即根据字符串指针，获取对应字符串的长度，不用计算，直接获取即可 */
 static inline size_t sdslen(const sds s) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -101,6 +109,7 @@ static inline size_t sdslen(const sds s) {
     return 0;
 }
 
+/* 获取剩余可用的空间 */
 static inline size_t sdsavail(const sds s) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -127,6 +136,7 @@ static inline size_t sdsavail(const sds s) {
     return 0;
 }
 
+/* 设置使用的空间长度 */
 static inline void sdssetlen(sds s, size_t newlen) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -151,6 +161,7 @@ static inline void sdssetlen(sds s, size_t newlen) {
     }
 }
 
+/* 增加已使用的空间长度 */
 static inline void sdsinclen(sds s, size_t inc) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -177,6 +188,7 @@ static inline void sdsinclen(sds s, size_t inc) {
 }
 
 /* sdsalloc() = sdsavail() + sdslen() */
+/* 返回分配的总的空间 */
 static inline size_t sdsalloc(const sds s) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -229,6 +241,8 @@ sds sdscpy(sds s, const char *t);
 
 sds sdscatvprintf(sds s, const char *fmt, va_list ap);
 #ifdef __GNUC__
+/* __attribute__((format(printf, 2, 3))) 用提示编译器，要类似printf一样检测参数风格类型,
+ * 2 表示 第二参数是format stirng，3 表示从第三个参数开始检查 */
 sds sdscatprintf(sds s, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 #else
