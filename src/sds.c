@@ -247,6 +247,10 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
     /* Don't use type 5: the user is appending to the string and type 5 is
      * not able to remember empty space, so sdsMakeRoomFor() must be called
      * at every appending operation. */
+	 /*
+	 * 当前是没有SDS_TYPE_5的，因为SDS_TYPE_5不能记录字符串剩余的空间数量，
+	 * 但是直接调用sdsnewlen还是可能用到SDS_TYPE_5类型的sds的
+	 */
     if (type == SDS_TYPE_5) type = SDS_TYPE_8;
 
     hdrlen = sdsHdrSize(type);

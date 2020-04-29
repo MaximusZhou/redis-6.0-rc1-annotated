@@ -46,6 +46,11 @@ typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings. */
+/*
+ * 只要是有预留空间等逻辑，不会使用SDS_TYPE_5的，直接使用SDS_TYPE_8，
+ * 只有直接或间接使用接口sdsnewlen接口的时候，才会使用到类型SDS_TYPE_5，
+ * 比如：sdsnew("hello redis")，并且sdsnew("")，也是使用SDS_TYPE_8的
+ */
 struct __attribute__ ((__packed__)) sdshdr5 {
 	/* flags低三个bit保存类型，最高的5个bit保存长度 */
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
