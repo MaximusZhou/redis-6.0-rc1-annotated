@@ -33,6 +33,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * 实现内存hash表相关的功能包括：insert/del/replace/find/get-random-element
+ */
+
 #include "fmacros.h"
 
 #include <stdio.h>
