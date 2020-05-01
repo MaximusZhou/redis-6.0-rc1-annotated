@@ -578,6 +578,9 @@ void *dictFetchValue(dict *d, const void *key) {
  * the fingerprint again when the iterator is released.
  * If the two fingerprints are different it means that the user of the iterator
  * performed forbidden operations against the dictionary while iterating. */
+/*
+ * 给一个dict生成一个签名，当前用遍历dict前后，做校验，在遍历过程中，没有执行禁止的操作
+ */
 long long dictFingerprint(dict *d) {
     long long integers[6], hash = 0;
     int j;
@@ -610,16 +613,19 @@ long long dictFingerprint(dict *d) {
     return hash;
 }
 
+/* 要对d开始遍历的时候，首先调用这个接口，获得一个迭代器 */
 dictIterator *dictGetIterator(dict *d)
 {
     dictIterator *iter = zmalloc(sizeof(*iter));
 
     iter->d = d;
-    iter->table = 0;
-    iter->index = -1;
+    iter->table = 0; /* 从第一个table开始 */
+    iter->index = -1; /* 遍历当前桶所在的下标索引 */
+    /* 这个字段用来在开始遍历ht[0]的时候，标识相应dict对应的iterators是否需要累加，如果累加了，
+     * 则停止rehash操作，使得迭代不会出现漏或者重复的情况 */
     iter->safe = 0;
-    iter->entry = NULL;
-    iter->nextEntry = NULL;
+    iter->entry = NULL; /* 指向当前遍历获得元素 */
+    iter->nextEntry = NULL; /* 指向下一次遍历要获得的元素 */
     return iter;
 }
 
@@ -630,6 +636,7 @@ dictIterator *dictGetSafeIterator(dict *d) {
     return i;
 }
 
+/* 遍历的时候调用这个接口，返回相应元素指针 */
 dictEntry *dictNext(dictIterator *iter)
 {
     while (1) {
@@ -639,10 +646,12 @@ dictEntry *dictNext(dictIterator *iter)
                 if (iter->safe)
                     iter->d->iterators++;
                 else
+                    /* 只是为了遍历结束的时候，做校验的 */
                     iter->fingerprint = dictFingerprint(iter->d);
             }
             iter->index++;
             if (iter->index >= (long) ht->size) {
+                /* 当前hash表遍历完成了，如果当前正在rehash，则尝试遍历第二个hash表 */
                 if (dictIsRehashing(iter->d) && iter->table == 0) {
                     iter->table++;
                     iter->index = 0;
@@ -678,6 +687,9 @@ void dictReleaseIterator(dictIterator *iter)
 
 /* Return a random entry from the hash table. Useful to
  * implement randomized algorithms */
+/*
+ * 首先随机到某一个桶，然后再从对应的桶中随机一个元素
+ */
 dictEntry *dictGetRandomKey(dict *d)
 {
     dictEntry *he, *orighe;
@@ -741,6 +753,10 @@ dictEntry *dictGetRandomKey(dict *d)
  * of continuous elements to run some kind of algorithm or to produce
  * statistics. However the function is much faster than dictGetRandomKey()
  * at producing N elements. */
+/*
+ * 这个接口尝试从dict中取count个随机元素，并保存到des中，但是不保证一定会返回count个，
+ * 即时dict中元素个数超过count个，也不能保证的
+ */
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
     unsigned long j; /* internal hash table id, 0 or 1. */
     unsigned long tables; /* 1 or 2 tables? */
@@ -761,21 +777,23 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
     tables = dictIsRehashing(d) ? 2 : 1;
     maxsizemask = d->ht[0].sizemask;
     if (tables > 1 && maxsizemask < d->ht[1].sizemask)
-        maxsizemask = d->ht[1].sizemask;
+        maxsizemask = d->ht[1].sizemask; /* 保存ht[0] 和 ht[1]，较大的那个 */
 
     /* Pick a random point inside the larger table. */
-    unsigned long i = random() & maxsizemask;
+    unsigned long i = random() & maxsizemask; /* 随机一个桶 */
     unsigned long emptylen = 0; /* Continuous empty entries so far. */
     while(stored < count && maxsteps--) {
         for (j = 0; j < tables; j++) {
             /* Invariant of the dict.c rehashing: up to the indexes already
              * visited in ht[0] during the rehashing, there are no populated
              * buckets, so we can skip ht[0] for indexes between 0 and idx-1. */
+            /* ht[0]中 0 到 idx -1 桶中的元素应该都移动到ht[1]了 */
             if (tables == 2 && j == 0 && i < (unsigned long) d->rehashidx) {
                 /* Moreover, if we are currently out of range in the second
                  * table, there will be no elements in both tables up to
                  * the current rehashing index, so we jump if possible.
                  * (this happens when going from big to small table). */
+                /* 从big hash表移到 small hash表的情况 */
                 if (i >= d->ht[1].size)
                     i = d->rehashidx;
                 else
@@ -797,6 +815,7 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
                 while (he) {
                     /* Collect all the elements of the buckets found non
                      * empty while iterating. */
+                    /* 把这个桶里所有的元素都返回 */
                     *des = he;
                     des++;
                     he = he->next;
@@ -822,6 +841,9 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
  * appearing one after the other. Then we report a random element in the range.
  * In this way we smooth away the problem of different chain lenghts. */
 #define GETFAIR_NUM_ENTRIES 15
+/*
+ * 这个接口比dictGetRandomKey随机性更好
+ */
 dictEntry *dictGetFairRandomKey(dict *d) {
     dictEntry *entries[GETFAIR_NUM_ENTRIES];
     unsigned int count = dictGetSomeKeys(d,entries,GETFAIR_NUM_ENTRIES);
