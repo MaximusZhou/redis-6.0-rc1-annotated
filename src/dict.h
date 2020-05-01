@@ -44,6 +44,7 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/* hash表中每个链表的节点 */
 typedef struct dictEntry {
     void *key;
     union {
@@ -66,6 +67,7 @@ typedef struct dictType {
 
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
+/* 保存hash表的数据结构，每个dict有两个dictht，是为了实现递增rehashing */
 typedef struct dictht {
     dictEntry **table;
     unsigned long size;
@@ -74,9 +76,13 @@ typedef struct dictht {
 } dictht;
 
 typedef struct dict {
-    dictType *type;
-    void *privdata;
+    /* 类型是类似objectKeyPointerValueDictType的全局变量，
+     * 在server.c中定义的，主要用来保存对key或者value操作的回调函数 */
+    dictType *type; 
+    void *privdata; /* 创建dict的时候，调用这传进来的数据 */
     dictht ht[2];
+    /* 如果rehashidx值不为-1，则dictIsRehashing返回1，即正在rehashing，
+     * 这个字段初始为-1 */
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
     unsigned long iterators; /* number of iterators currently running */
 } dict;
@@ -125,6 +131,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
     if ((d)->type->keyDestructor) \
         (d)->type->keyDestructor((d)->privdata, (entry)->key)
 
+/* 设置_key__为entry为value，根据dict类型，来决定是否dup key再赋值给字段key*/
 #define dictSetKey(d, entry, _key_) do { \
     if ((d)->type->keyDup) \
         (entry)->key = (d)->type->keyDup((d)->privdata, _key_); \

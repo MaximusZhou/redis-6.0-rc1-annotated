@@ -614,6 +614,10 @@ int ld2string(char *buf, size_t len, long double value, ld2string_mode mode) {
  * stream. However if /dev/urandom is not available, a weaker seed is used.
  *
  * This function is not thread safe, since the state is global. */
+/* 生成长度为len字节的种子，尝试从/dev/urandom读取，
+ * 如果没有这个文件，则用时间和进程pid生成一个弱的随机种子，
+ * 然后对seed做sha1签名，最后把这个签名拷贝到p中，作为结果返回
+ * */
 void getRandomBytes(unsigned char *p, size_t len) {
     /* Global state. */
     static int seed_initialized = 0;

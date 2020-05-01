@@ -1130,6 +1130,11 @@ void exitFromChild(int retcode) {
 }
 
 /*====================== Hash table type implementation  ==================== */
+/*
+ * 实现各种hash表类型，不同的hash表类型，对应操作不同的key和value类型，
+ * 从而操作这些key或者value的回调函数不一样，比如比较运算，key对应的hash函数等
+ * 下面就是定义不同hash表类型的全局变量，以及相应操作的函数
+ * */
 
 /* This is a hash table type that uses the SDS dynamic strings library as
  * keys and redis objects as values (objects can hold SDS strings,
@@ -1191,6 +1196,7 @@ int dictObjKeyCompare(void *privdata, const void *key1,
     return dictSdsKeyCompare(privdata,o1->ptr,o2->ptr);
 }
 
+/* 这个函数说是robj的hash函数，但是用起来，把robj对应的字段ptr认为一定是sds类型了 */
 uint64_t dictObjHash(const void *key) {
     const robj *o = key;
     return dictGenHashFunction(o->ptr, sdslen((sds)o->ptr));
@@ -1288,6 +1294,7 @@ dictType zsetDictType = {
 };
 
 /* Db->dict, keys are sds strings, vals are Redis objects. */
+/* redis db保存数据的dict对应的类型，key是 sds strings val类型是 redis objects */
 dictType dbDictType = {
     dictSdsHash,                /* hash function */
     NULL,                       /* key dup */
