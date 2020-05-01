@@ -151,11 +151,13 @@ int _dictInit(dict *d, dictType *type,
 
 /* Resize the table to the minimal size that contains all the elements,
  * but with the invariant of a USED/BUCKETS ratio near to <= 1 */
+/* 在接口tryResizeHashTables中调用，即后台定时检测，是否需要缩小hash表的大小  */
 int dictResize(dict *d)
 {
     int minimal;
 
     if (!dict_can_resize || dictIsRehashing(d)) return DICT_ERR;
+    /* 以hash表中元素个数为新的hash表大小 */
     minimal = d->ht[0].used;
     if (minimal < DICT_HT_INITIAL_SIZE)
         minimal = DICT_HT_INITIAL_SIZE;
@@ -163,7 +165,7 @@ int dictResize(dict *d)
 }
 
 /* Expand or create the hash table */
-/* 扩展或创建hash桶，设置rehashidx为0，表示进入渐进式rehash操作 */
+/* 扩展、缩小或创建hash桶，设置rehashidx为0，表示进入渐进式rehash操作 */
 int dictExpand(dict *d, unsigned long size)
 {
     /* the size is invalid if it is smaller than the number of
@@ -208,22 +210,32 @@ int dictExpand(dict *d, unsigned long size)
  * guaranteed that this function will rehash even a single bucket, since it
  * will visit at max N*10 empty buckets in total, otherwise the amount of
  * work it does would be unbound and the function may block for a long time. */
+/*
+ * 这个函数功能就是把原来hash表中n个桶中所有元素移到新的hash表，
+ * 如果rehash完成了，则返回0，否则返回1，
+ * 在实现过程中，值得注意的是，可能连续处理多个空的桶，
+ * 为了防止这个函数执行时间过长，处理空桶的个数，也不能超过10*n。
+ * 这个接口除了才对dic做操作的时候尝试调用，也会在redis后台，通过接口dictRehashMilliseconds定时调用
+ */
 int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
+    /* n用来标识，每次处理桶的数目，即渐进式rehash每次处理最小粒度是一个桶中所有的元素 */
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
         assert(d->ht[0].size > (unsigned long)d->rehashidx);
+        /* 每次最多处理的空桶的数目是n*10 */
         while(d->ht[0].table[d->rehashidx] == NULL) {
             d->rehashidx++;
             if (--empty_visits == 0) return 1;
         }
         de = d->ht[0].table[d->rehashidx];
         /* Move all the keys in this bucket from the old to the new hash HT */
+        /* 把rehashidx对应的桶的中所有元素，从旧的hash表(ht[0]) ，移到先的hash表(ht[1]) */
         while(de) {
             uint64_t h;
 
@@ -236,11 +248,14 @@ int dictRehash(dict *d, int n) {
             d->ht[1].used++;
             de = nextde;
         }
+
+        /* rehashidx对应的桶处理完，则处理下一个桶 */
         d->ht[0].table[d->rehashidx] = NULL;
         d->rehashidx++;
     }
 
     /* Check if we already rehashed the whole table... */
+    /* rehash结束了，则释放ht[0]，然后把ht[1]赋值给ht[0]，重置ht[1]和rehashidx为初始值 */
     if (d->ht[0].used == 0) {
         zfree(d->ht[0].table);
         d->ht[0] = d->ht[1];
@@ -261,10 +276,12 @@ long long timeInMilliseconds(void) {
 }
 
 /* Rehash for an amount of time between ms milliseconds and ms+1 milliseconds */
+/* 在接口会定时被调用，用于redis在corn做rehash操作 */
 int dictRehashMilliseconds(dict *d, int ms) {
     long long start = timeInMilliseconds();
     int rehashes = 0;
 
+    /* 每次操作100个桶，如果发现执行时间超过了1ms，则马上返回 */
     while(dictRehash(d,100)) {
         rehashes += 100;
         if (timeInMilliseconds()-start > ms) break;
@@ -280,6 +297,12 @@ int dictRehashMilliseconds(dict *d, int ms) {
  * This function is called by common lookup or update operations in the
  * dictionary so that the hash table automatically migrates from H1 to H2
  * while it is actively used. */
+/*
+ * 这个接口执行一步rehash操作，即原来hash表,即ht[0]，移动到新的hash表ht[1]中，
+ * 这个接口往dict增加元素、删除和查找元素等各种操作的时候，会判断一下，是否调用，
+ * 即渐近式rehash的思路就是一个非常耗时的rehash操作均摊到对dict每一次操作上。
+ * 只有当前没有在dict上做遍历操作，才能执行，否则可能出现dict中元素没有被遍历到或者重复遍历的情况
+ */
 static void _dictRehashStep(dict *d) {
     if (d->iterators == 0) dictRehash(d,1);
 }
@@ -323,6 +346,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     dictEntry *entry;
     dictht *ht;
 
+    /* 如果正常rehash，则尝试做一步rehashing操作 */
     if (dictIsRehashing(d)) _dictRehashStep(d);
 
     /* Get the index of the new element, or -1 if
@@ -335,7 +359,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * system it is more likely that recently added entries are accessed
      * more frequently. */
     /*
-     * 分配新的节点，并且插入到链表的头部
+     * 分配新的节点，并且插入到链表的头部，如果在rehash中，则一定是插入在ht[1] hash表中
      */
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
     entry = zmalloc(sizeof(*entry));
@@ -392,6 +416,14 @@ dictEntry *dictAddOrFind(dict *d, void *key) {
 /* Search and remove an element. This is an helper function for
  * dictDelete() and dictUnlink(), please check the top comment
  * of those functions. */
+/*
+ * 从dict找到相应的元素，更加参数nofree，来决定释放释放相应的内存，
+ * 如果nofree为0，则释放相应的内存，包括元素，key和value对应的内存，否则不释放
+ * 如果删除成功，接口指向相应的元素的执行，否则返回NULL
+ * 值得注意的是，删除元素，并不会尝试去检测是否需要减少hash表的大小，
+ * 对于保存db数据的dict， 这个尝试的操作，是redis定时检测，然后决定释放去做，
+ * 即定时调用接口tryResizeHashTables
+ */
 static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     uint64_t h, idx;
     dictEntry *he, *prevHe;
@@ -409,6 +441,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
         while(he) {
             if (key==he->key || dictCompareKeys(d, key, he->key)) {
                 /* Unlink the element from the list */
+                /* 从链表中删除 */
                 if (prevHe)
                     prevHe->next = he->next;
                 else
@@ -431,6 +464,8 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
 /* Remove an element, returning DICT_OK on success or DICT_ERR if the
  * element was not found. */
+/* 从dict删除相应的元素，并且释放相应的内存，
+ * 如果成功，则返回DICT_OK，否则，即元素不存在，则返回DICT_ERR */
 int dictDelete(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,0) ? DICT_OK : DICT_ERR;
 }
@@ -447,7 +482,7 @@ int dictDelete(dict *ht, const void *key) {
  *
  *  entry = dictFind(...);
  *  // Do something with entry
- *  dictDelete(dictionary,entry);
+ *  dictDelete(dictionary,entry->key); // 需要再查找一次
  *
  * Thanks to this function it is possible to avoid this, and use
  * instead:
@@ -455,6 +490,10 @@ int dictDelete(dict *ht, const void *key) {
  * entry = dictUnlink(dictionary,entry);
  * // Do something with entry
  * dictFreeUnlinkedEntry(entry); // <- This does not need to lookup again.
+ */
+/*
+ * 调用这个接口，如果相应的元素存在，返回相应的元素信息，调用者使用完元素后，
+ * 通常还需要调用dictFreeUnlinkedEntry释放相应的内存
  */
 dictEntry *dictUnlink(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,1);
@@ -510,6 +549,7 @@ dictEntry *dictFind(dict *d, const void *key)
     uint64_t h, idx, table;
 
     if (d->ht[0].used + d->ht[1].used == 0) return NULL; /* dict is empty */
+    /* 如果正在渐进的rehash，则需要尝试进行一步rehash操作 */
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {

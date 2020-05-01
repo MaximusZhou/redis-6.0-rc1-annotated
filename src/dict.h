@@ -70,9 +70,9 @@ typedef struct dictType {
 /* 保存hash表的数据结构，每个dict有两个dictht，是为了实现递增rehashing */
 typedef struct dictht {
     dictEntry **table;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
+    unsigned long size; /* hash table桶的大小*/
+    unsigned long sizemask; /* size大小都是2^n，这个字段的值就是2^n-1*/
+    unsigned long used; /* hash table中元素的个数 */
 } dictht;
 
 typedef struct dict {
@@ -82,7 +82,8 @@ typedef struct dict {
     void *privdata; /* 创建dict的时候，调用这传进来的数据 */
     dictht ht[2];
     /* 如果rehashidx值不为-1，则dictIsRehashing返回1，即正在rehashing，
-     * 这个字段初始为-1 */
+     * 这个字段初始为-1，这个字段用在正在进行rehash的时候，
+     * 这个字段指向ht[0]正在处理的桶所在的索引 */
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
     unsigned long iterators; /* number of iterators currently running */
 } dict;

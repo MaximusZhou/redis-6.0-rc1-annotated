@@ -1413,6 +1413,8 @@ dictType replScriptCacheDictType = {
     NULL                        /* val destructor */
 };
 
+/* 检测hash表是否需要resize，如果hash中哟元素，并且填充百分比低于 HASHTABLE_MIN_FILL%，
+ * 当前10%，则指向resize操作 */
 int htNeedsResize(dict *dict) {
     long long size, used;
 
@@ -1424,6 +1426,7 @@ int htNeedsResize(dict *dict) {
 
 /* If the percentage of used slots in the HT reaches HASHTABLE_MIN_FILL
  * we resize the hash table to save memory */
+/* 在接口在redis cron被定时调用 */
 void tryResizeHashTables(int dbid) {
     if (htNeedsResize(server.db[dbid].dict))
         dictResize(server.db[dbid].dict);
@@ -1438,13 +1441,22 @@ void tryResizeHashTables(int dbid) {
  *
  * The function returns 1 if some rehashing was performed, otherwise 0
  * is returned. */
+/*
+ * 当没有子进程做save db操作的时候(因为这时候，还做rehash操作，会出现大量的copy-on-write操作)，
+ * 后台会轮询调用这个接口，即按通用的hz评率来调用
+ * 只要执行了rehash操作，则返回1，否则返回0
+ */
 int incrementallyRehash(int dbid) {
     /* Keys dictionary */
+    /* 保存数据的dict */
     if (dictIsRehashing(server.db[dbid].dict)) {
+        /* 每次执行rehash操作，限制[1,2)ms */
         dictRehashMilliseconds(server.db[dbid].dict,1);
         return 1; /* already used our millisecond for this loop... */
     }
+
     /* Expires */
+    /* 保存具有有效期的key的dict */
     if (dictIsRehashing(server.db[dbid].expires)) {
         dictRehashMilliseconds(server.db[dbid].expires,1);
         return 1; /* already used our millisecond for this loop... */
@@ -1706,13 +1718,20 @@ void databasesCron(void) {
     /* Perform hash tables rehashing if needed, but only if there are no
      * other processes saving the DB on disk. Otherwise rehashing is bad
      * as will cause a lot of copy-on-write of memory pages. */
+    /*
+     * 只有没有子进程在做save db操作的时候，才执行rehash操作，
+     * 否则可能出现大量的copy-on-write的情况
+     */
     if (!hasActiveChildProcess()) {
         /* We use global counters so if we stop the computation at a given
          * DB we'll be able to start from the successive in the next
          * cron loop iteration. */
+        /*
+         * 每次轮询db的有上限的，因此这个地方用static变量，依次递增
+         */
         static unsigned int resize_db = 0;
         static unsigned int rehash_db = 0;
-        int dbs_per_call = CRON_DBS_PER_CALL;
+        int dbs_per_call = CRON_DBS_PER_CALL; /* 每次处理db的最大数量 */
         int j;
 
         /* Don't test more DBs than we have. */
@@ -1729,6 +1748,7 @@ void databasesCron(void) {
             for (j = 0; j < dbs_per_call; j++) {
                 int work_done = incrementallyRehash(rehash_db);
                 if (work_done) {
+                    /* 每次最多一个db执行rehash操作 */
                     /* If the function did some work, stop here, we'll do
                      * more at the next cron loop. */
                     break;
