@@ -42,6 +42,7 @@
 #define INTSET_ENC_INT64 (sizeof(int64_t))
 
 /* Return the required encoding for the provided value. */
+/* 返回相应的整数需要的编码类型 */
 static uint8_t _intsetValueEncoding(int64_t v) {
     if (v < INT32_MIN || v > INT32_MAX)
         return INTSET_ENC_INT64;
@@ -94,6 +95,7 @@ static void _intsetSet(intset *is, int pos, int64_t value) {
 }
 
 /* Create an empty intset. */
+/* 新建一个空的整数集合 */
 intset *intsetNew(void) {
     intset *is = zmalloc(sizeof(intset));
     is->encoding = intrev32ifbe(INTSET_ENC_INT16);
@@ -112,6 +114,8 @@ static intset *intsetResize(intset *is, uint32_t len) {
  * sets "pos" to the position of the value within the intset. Return 0 when
  * the value is not present in the intset and sets "pos" to the position
  * where "value" can be inserted. */
+/* 在集合中查找value，如果查找成功，则返回1，并且值所在的位置保存到pos中，
+ * 如果查找失败，则返回0，并值value要插入的位置保存到pos */
 static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
     int min = 0, max = intrev32ifbe(is->length)-1, mid = -1;
     int64_t cur = -1;
@@ -124,14 +128,17 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
         /* Check for the case where we know we cannot find the value,
          * but do know the insert position. */
         if (value > _intsetGet(is,max)) {
+            /* 肯定插入到最后 */
             if (pos) *pos = intrev32ifbe(is->length);
             return 0;
+            /* 肯定插入到第一个位置 */
         } else if (value < _intsetGet(is,0)) {
             if (pos) *pos = 0;
             return 0;
         }
     }
 
+    /* 二分查找 */
     while(max >= min) {
         mid = ((unsigned int)min + (unsigned int)max) >> 1;
         cur = _intsetGet(is,mid);
@@ -154,6 +161,7 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
 }
 
 /* Upgrades the intset to a larger encoding and inserts the given integer. */
+/* 该接口首先升级更大范围的编码类型，然后插入值value */
 static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     uint8_t curenc = intrev32ifbe(is->encoding);
     uint8_t newenc = _intsetValueEncoding(value);
@@ -162,15 +170,20 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
 
     /* First set new encoding and resize */
     is->encoding = intrev32ifbe(newenc);
+    /* 按新的编码类型，分配存放整数个数为length+1的空间 */
     is = intsetResize(is,intrev32ifbe(is->length)+1);
 
     /* Upgrade back-to-front so we don't overwrite values.
      * Note that the "prepend" variable is used to make sure we have an empty
      * space at either the beginning or the end of the intset. */
+    /* 从后往前拷贝原来数据，拷贝到新的位，并且为要插入的值预留了一个位置，
+     * 要插入的值小于0，预留的位置在开始位置，大于等于0，预留的位置在最后，
+     * 实质这个地方是在同一块内存上，把前面一段的数据拷贝（旧的编码）到整个一块内存上(新的编码)*/
     while(length--)
         _intsetSet(is,length+prepend,_intsetGetEncoded(is,length,curenc));
 
     /* Set the value at the beginning or the end. */
+    /* 小于0的值，则放在前面，大于0的值，则插入后面 */
     if (prepend)
         _intsetSet(is,0,value);
     else
@@ -201,6 +214,7 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
 }
 
 /* Insert an integer in the intset */
+/* 往整数集合中插入一个整数，如果整数已经在集合中，success指向的空间保存值0 */
 intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
     uint8_t valenc = _intsetValueEncoding(value);
     uint32_t pos;
@@ -209,6 +223,7 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
     /* Upgrade encoding if necessary. If we need to upgrade, we know that
      * this value should be either appended (if > 0) or prepended (if < 0),
      * because it lies outside the range of existing values. */
+    /* 如果原来的编码不能表示整数value，需要升级编码类型，然后插入 */
     if (valenc > intrev32ifbe(is->encoding)) {
         /* This always succeeds, so we don't need to curry *success. */
         return intsetUpgradeAndAdd(is,value);
@@ -216,15 +231,18 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
         /* Abort if the value is already present in the set.
          * This call will populate "pos" with the right position to insert
          * the value when it cannot be found. */
+        /* 查找要插入的位置，如果已经在集合中，则直接返回 */
         if (intsetSearch(is,value,&pos)) {
             if (success) *success = 0;
             return is;
         }
 
         is = intsetResize(is,intrev32ifbe(is->length)+1);
+        /* 往后移动一个位置 */
         if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
     }
 
+    /* 把值设置到相应的位置 */
     _intsetSet(is,pos,value);
     is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
     return is;
