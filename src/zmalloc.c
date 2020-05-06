@@ -78,11 +78,11 @@ void zlibc_free(void *ptr) {
 #define dallocx(ptr,flags) je_dallocx(ptr,flags)
 #endif
 
+/* TODOQUES 这个地方感觉不对，应该传入__n，是假定所有的内存分配器，分配的内存大小都是sizeof(long) 的整数倍 */
+
 #define update_zmalloc_stat_alloc(__n) do { \
     size_t _n = (__n); \
     if (_n&(sizeof(long)-1)) _n += sizeof(long)-(_n&(sizeof(long)-1)); \
-	/* TODOQUES 这个地方感觉不对，应该传入__n，是假定所有的内存分配器，
-	   分配的内存大小都是sizeof(long) 的整数倍 */
     atomicIncr(used_memory,__n); \
 } while(0)
 
