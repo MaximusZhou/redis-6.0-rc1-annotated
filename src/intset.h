@@ -34,8 +34,9 @@
 
 typedef struct intset {
     uint32_t encoding;
+    /* 集合中元素的个数的，也是就说contents的大小为 length * encode_len，encode_len每个元素编码对应的长度*/
     uint32_t length;
-    int8_t contents[]; /* 按整数值的大小从小到大保存的 */
+    int8_t contents[]; /* 按整数值的大小从小到大保存的，并且每个元素的长度是根据字段encoding编码获得的 */
 } intset;
 
 intset *intsetNew(void);

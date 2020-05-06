@@ -74,6 +74,7 @@ static int64_t _intsetGetEncoded(intset *is, int pos, uint8_t enc) {
 }
 
 /* Return the value at pos, using the configured encoding. */
+/* 根据位置，返回相应的集合元素值 */
 static int64_t _intsetGet(intset *is, int pos) {
     return _intsetGetEncoded(is,pos,intrev32ifbe(is->encoding));
 }
@@ -192,9 +193,10 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     return is;
 }
 
+/* 这里的from通常是大于to，把从from位置开始的元素数据移动到to位置，该接口通常用来删除元素 */
 static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
     void *src, *dst;
-    uint32_t bytes = intrev32ifbe(is->length)-from;
+    uint32_t bytes = intrev32ifbe(is->length)-from; /* 要移动的大小为元素个数乘以大小*/
     uint32_t encoding = intrev32ifbe(is->encoding);
 
     if (encoding == INTSET_ENC_INT64) {
@@ -249,6 +251,7 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
 }
 
 /* Delete integer from intset */
+/* 从集合中删除指定的元素 */
 intset *intsetRemove(intset *is, int64_t value, int *success) {
     uint8_t valenc = _intsetValueEncoding(value);
     uint32_t pos;
@@ -261,6 +264,7 @@ intset *intsetRemove(intset *is, int64_t value, int *success) {
         if (success) *success = 1;
 
         /* Overwrite value with tail and update length */
+        /* 移动数组中的元素，删除元素，然后缩小空间大小，更新集合中元素个数 */
         if (pos < (len-1)) intsetMoveTail(is,pos+1,pos);
         is = intsetResize(is,len-1);
         is->length = intrev32ifbe(len-1);
@@ -269,6 +273,7 @@ intset *intsetRemove(intset *is, int64_t value, int *success) {
 }
 
 /* Determine whether a value belongs to this set */
+/* 查证指定的值是否在集合中，如果是则返回1，否则返回0 */
 uint8_t intsetFind(intset *is, int64_t value) {
     uint8_t valenc = _intsetValueEncoding(value);
     return valenc <= intrev32ifbe(is->encoding) && intsetSearch(is,value,NULL);
@@ -281,6 +286,7 @@ int64_t intsetRandom(intset *is) {
 
 /* Get the value at the given position. When this position is
  * out of range the function returns 0, when in range it returns 1. */
+/* 返回指定位置的元素值，并保存到value中，如果位置不在激活范围内，则返回0，否则返回1 */
 uint8_t intsetGet(intset *is, uint32_t pos, int64_t *value) {
     if (pos < intrev32ifbe(is->length)) {
         *value = _intsetGet(is,pos);
@@ -295,6 +301,7 @@ uint32_t intsetLen(const intset *is) {
 }
 
 /* Return intset blob size in bytes. */
+/* 返回集合占用的总的内存大小，包括结构体部分 */
 size_t intsetBlobLen(intset *is) {
     return sizeof(intset)+intrev32ifbe(is->length)*intrev32ifbe(is->encoding);
 }
@@ -349,6 +356,7 @@ static intset *createSet(int bits, int size) {
     return is;
 }
 
+/* 检查集合中的元素都必须按顺序，从小到大排列的 */
 static void checkConsistency(intset *is) {
     for (uint32_t i = 0; i < (intrev32ifbe(is->length)-1); i++) {
         uint32_t encoding = intrev32ifbe(is->encoding);
