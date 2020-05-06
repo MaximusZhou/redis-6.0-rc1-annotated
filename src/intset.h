@@ -32,6 +32,7 @@
 #define __INTSET_H
 #include <stdint.h>
 
+/* 这个结构体每个字段，都是按小端的方式表示的 */
 typedef struct intset {
     uint32_t encoding;
     /* 集合中元素的个数的，也是就说contents的大小为 length * encode_len，encode_len每个元素编码对应的长度*/
