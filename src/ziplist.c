@@ -179,6 +179,71 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * ziplist相关实现，ziplist实质就是一个双向链表的实现，只不过ziplist实现方式非常节省内存，
+ * 它能够保存整数或者字符串，其他整数保存的实质的编码，而不是一串字符。ziplist保存的数据格式如下：
+ * <zlbytes> <zltail> <zllen> <entry> <entry> ... <entry> <zlend>
+ * 所有的字段都是用小段保存的，即使在大端系统上也是如此，各个字段的含义如下：
+ * zlbytes: uint32_t类型，保存ziplist总的字节数，包括这个字段本身的4个字节，
+ *          这个字段用在resize ziplist的时候，不用重新计算整个ziplist所占用的空间大小;
+ * zltail: uint32_t类型，用来保存最后一个数据项目entry的offset，主要是为了方便从尾部做pop操作;
+ * zllen:  uint16_t类型，用了保存entry的数目，如果ziplist中保存的元素数目大于2^16-2，
+ *         这个字段的值保存为2^16-1，需要遍历整个ziplist才知道包含多少个元素;
+ * zlend:  uint8_t类型，一个特殊的字段，用来表示ziplist的结束，其值为255，
+ *         因此正常的entry的第一个字节都不会是255;
+ *
+ * 关于entry的编码说明：
+ * 1. 每个entry的最开始部分，称为metadata，它包含两部分信息，第一部分信息包括前一个entry的长度，
+ *    这个是为了方便，从后往前进行遍历，第二部分用了保存编码信息，表示这个entry包含的字符串还是整数，
+ *    如果包括的字符串，这部分还包含了字符串长度，因此完整的entry的格式如下：
+ *    <prevlen> <encoding> <entry-data>
+ *    有时候编码信息会包括entry本身，像一些小的整数，就没有<entry-data>部分，其数据格式就是：
+ *    <prevlen> <encoding> 
+ * 2. <prevlen>部分编码方式如下: 如果长度小于等于254个字节，则只需要一个字节来保存，如果大于254，
+ *    则<prevlen>需要消耗5个字节，第一个字节就是255作为标识，剩余的4个字节保存相应的值，
+ *    因此编码方式是:
+ *    <prevlen from 0 to 253> <encoding> <entry> 或者是
+ *    0xFE <4 bytes unsigned little endian prevlen> <encoding> <entry> 
+ * 3. <encoding>字段的依赖于entry的内容的，当entry是字符串的时候，第一个字节的前2个bit，
+ *    确定了字符串的长度，用接下来多少空间来保存。当entry是整数的时候，第一个字节的前2个bit被设置为11,
+ *    然后再接下来的2个bit用了确定保存那种类型的整数（即不同范围的整数），总之，第一个字节决定了entry的类型。
+ *    其具体格式如下：
+ *
+ *    |00pppppp| - 1 byte
+ *    00开头的字符串类型，这个字符长度的可以用6bit表示，即字符串长度小于等于63
+ *
+ *    |01pppppp|qqqqqqqq| - 2 bytes
+ *    01开头的字符串类型，这个字符串长度的可以用14bit表示，即字符串长度小于等于16383，
+ *    注意这里的14bit被保存为大端
+ *
+ *    |10000000|qqqqqqqq|rrrrrrrr|ssssssss|tttttttt| - 5 bytes
+ *    10开头的字符串类型，这个字符串的长度大于等于16384，并且最长为2^32-1，即用后面的4个字节保存长度的，
+ *    其中第一个字节后面的6bit是没有使用的.注意这4个字节被保存为大端
+ *
+ *    |11000000| - 3 bytes
+ *    1100开头的整数类型，用2个字节来保存int16_t
+ *
+ *    |11010000| - 5 bytes
+ *    1101开头的整数类型，用4个字节来保存int32_t
+ *
+ *    |11100000| - 9 bytes
+ *    1110开头的整数类型，用8个字节来保存int64_t
+ *
+ *    |11110000| - 4 bytes
+ *     11110000开头的整数类型，用3个字节来保存24位带符号的整数
+ *
+ *    |11111110| - 2 bytes
+ *     11111110开头的整数类型，用1个字节来保存8位带符号的整数
+ *
+ *    |1111xxxx| - 1 bytes
+ *    编码本身包括了entry内容的整数类型，其中xxxx是[0001,1101]，其编码字面值范围是[1,13],
+ *    但是实质值范围是[0,12]，因为0000和1111是不能使用的，即真实值是编码值-1
+ *
+ *    |11111111| - ziplist结束符
+ *
+ *    在真正实现的时候，ziplist就是对应一块内存，解析或者操作每段内存的含义
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,9 +304,11 @@
 /* The size of a ziplist header: two 32 bit integers for the total
  * bytes count and last item offset. One 16 bit integer for the number
  * of items field. */
+/* ziplist头部的长度，即<zlbytes> <zltail> <zllen>加起来的长度 */
 #define ZIPLIST_HEADER_SIZE     (sizeof(uint32_t)*2+sizeof(uint16_t))
 
 /* Size of the "end of ziplist" entry. Just one byte. */
+/* ziplist尾部标识的长度，即255 */
 #define ZIPLIST_END_SIZE        (sizeof(uint8_t))
 
 /* Return the pointer to the first entry of a ziplist. */
@@ -575,6 +642,7 @@ void zipEntry(unsigned char *p, zlentry *e) {
 }
 
 /* Create a new empty ziplist. */
+/* 创建一个空的ziplist */
 unsigned char *ziplistNew(void) {
     unsigned int bytes = ZIPLIST_HEADER_SIZE+ZIPLIST_END_SIZE;
     unsigned char *zl = zmalloc(bytes);
