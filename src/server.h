@@ -337,6 +337,10 @@ typedef long long ustime_t; /* microsecond time type. */
 #define UNUSED(V) ((void) V)
 
 #define ZSKIPLIST_MAXLEVEL 64 /* Should be enough for 2^64 elements */
+/*
+ * 每个节点所包含的平均指针数目为1/(1-ZSKIPLIST_P)
+ * 这个值决定了每个节点平均期望占用空间的大小，即平均每个节点的层数的期望
+ * */
 #define ZSKIPLIST_P 0.25      /* Skiplist P = 1/4 */
 
 /* Append only defines */
@@ -876,25 +880,32 @@ struct sharedObjectsStruct {
 };
 
 /* ZSETs use a specialized version of Skiplists */
+/* skiplist node实现 */
 typedef struct zskiplistNode {
     sds ele;
     double score;
-    struct zskiplistNode *backward;
+    struct zskiplistNode *backward; /* 双向链表，方便从后往前遍历 */
     struct zskiplistLevel {
         struct zskiplistNode *forward;
+		 /* span 用来记录两个节点的距离，用这个字段可以计算节点的排位 
+		  * 在查找某个节点的过程中，将沿途访问过的所有层的span累加起来，
+		  * 就是目标节点在有序集合中的排位
+		  * */
         unsigned long span;
-    } level[];
+    } level[]; /* 表示每一层的信息 */
 } zskiplistNode;
 
+/* 表示ziplist的数据结构 */
 typedef struct zskiplist {
     struct zskiplistNode *header, *tail;
-    unsigned long length;
-    int level;
+    unsigned long length; /* skiplist的长度，也是节点的数目 */
+    int level; /* 层数最大的节点对应的层数*/
 } zskiplist;
 
+/* 用hashtabl加上skiplist实现有序集合的候，对应的数据结构 */
 typedef struct zset {
-    dict *dict;
-    zskiplist *zsl;
+    dict *dict; /* 保存了robj -> score的映射 */
+    zskiplist *zsl; /* 保存score -> robj */
 } zset;
 
 typedef struct clientBufferLimitsConfig {

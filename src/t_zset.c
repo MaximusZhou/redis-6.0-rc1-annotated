@@ -56,6 +56,16 @@
  * pointers being only at "level 1". This allows to traverse the list
  * from tail to head, useful for ZREVRANGE. */
 
+/*
+ * 用来实现有序集合相关的命令和接口
+ * 其中hash table 保存redis object(实质就是sds)到score的映射，
+ * skiplist保存score 到 redis object的映射，
+ * 并且sds在hash table 和skiplist只保存一份，共用内存的，
+ * 为了方便管理sds的内存，只在zslFreeNode接口中才可能释放sds对应的内存，
+ * 相应的hash table是没有设置释放value的方法的,
+ * 因此当从hash table中删除一个元素的时候，相应的也要从skiplist中删除
+ */
+
 #include "server.h"
 #include <math.h>
 
@@ -63,11 +73,16 @@
  * Skiplist implementation of the low level API
  *----------------------------------------------------------------------------*/
 
+ /*
+  * skiplist 相关的接口的实现，都是以zsl作为前缀
+  */
+
 int zslLexValueGteMin(sds value, zlexrangespec *spec);
 int zslLexValueLteMax(sds value, zlexrangespec *spec);
 
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
+/* 创建指定层数skiplist的节点 */
 zskiplistNode *zslCreateNode(int level, double score, sds ele) {
     zskiplistNode *zn =
         zmalloc(sizeof(*zn)+level*sizeof(struct zskiplistLevel));
@@ -77,6 +92,7 @@ zskiplistNode *zslCreateNode(int level, double score, sds ele) {
 }
 
 /* Create a new skiplist. */
+/* 创建一个新的skiplist */
 zskiplist *zslCreate(void) {
     int j;
     zskiplist *zsl;
@@ -103,10 +119,12 @@ void zslFreeNode(zskiplistNode *node) {
 }
 
 /* Free a whole skiplist. */
+/* 释放掉整个skiplist */
 void zslFree(zskiplist *zsl) {
     zskiplistNode *node = zsl->header->level[0].forward, *next;
 
     zfree(zsl->header);
+	/* 变量第一层链表上所有的元素 */
     while(node) {
         next = node->level[0].forward;
         zslFreeNode(node);
@@ -119,6 +137,10 @@ void zslFree(zskiplist *zsl) {
  * The return value of this function is between 1 and ZSKIPLIST_MAXLEVEL
  * (both inclusive), with a powerlaw-alike distribution where higher
  * levels are less likely to be returned. */
+/*
+ * 返回一个随机的层数，大小为[1, ZSKIPLIST_MAXLEVEL]，使用了power law分布，
+ * 即越大的层数返回的概率越小
+ */
 int zslRandomLevel(void) {
     int level = 1;
     while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
@@ -129,6 +151,9 @@ int zslRandomLevel(void) {
 /* Insert a new node in the skiplist. Assumes the element does not already
  * exist (up to the caller to enforce that). The skiplist takes ownership
  * of the passed SDS string 'ele'. */
+/*
+ * 向skiplist中插入一个node
+ */
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
@@ -718,6 +743,10 @@ zskiplistNode *zslLastInLexRange(zskiplist *zsl, zlexrangespec *range) {
 /*-----------------------------------------------------------------------------
  * Ziplist-backed sorted set API
  *----------------------------------------------------------------------------*/
+ 
+ /*
+  * 用ziplist实现有序集合相关的接口，接口都是以zzl作为前缀的
+  */
 
 double zzlGetScore(unsigned char *sptr) {
     unsigned char *vstr;
@@ -1165,6 +1194,10 @@ unsigned long zsetLength(const robj *zobj) {
     return length;
 }
 
+/* 
+ * 转换集合的实现方式，比如用ziplist 转换为 hashtable+skiplist 
+ * 参数encoding 是目标编码方式
+ * */
 void zsetConvert(robj *zobj, int encoding) {
     zset *zs;
     zskiplistNode *node, *next;
@@ -1191,6 +1224,7 @@ void zsetConvert(robj *zobj, int encoding) {
         sptr = ziplistNext(zl,eptr);
         serverAssertWithInfo(NULL,zobj,sptr != NULL);
 
+		/* 把ziplist中所有的元素插入的skiplist中 */
         while (eptr != NULL) {
             score = zzlGetScore(sptr);
             serverAssertWithInfo(NULL,zobj,ziplistGet(eptr,&vstr,&vlen,&vlong));
@@ -1215,6 +1249,8 @@ void zsetConvert(robj *zobj, int encoding) {
 
         /* Approach similar to zslFree(), since we want to free the skiplist at
          * the same time as creating the ziplist. */
+
+		/* 释放原来的skiplist，同时把相应的元素保存到ziplist中 */
         zs = zobj->ptr;
         dictRelease(zs->dict);
         node = zs->zsl->header->level[0].forward;
@@ -1311,6 +1347,14 @@ int zsetScore(robj *zobj, sds member, double *score) {
  *
  * The function does not take ownership of the 'ele' SDS string, but copies
  * it if needed. */
+
+/*
+ * 向集合中增加或更新一个元素的通用接口，不管底层是用ziplist，还是skiplist实现，
+ * 参数flags作为输入值，执行不同的操作，同时用来保存返回值
+ * 参数newscore用在ZADD_INCR命令中，保存最新的score
+ *
+ * 这个接口可能触发把集合的实现由ziplist 改成 hashtable + skiplist
+ */
 int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     /* Turn options into simple to check vars. */
     int incr = (*flags & ZADD_INCR) != 0;
@@ -1357,6 +1401,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             /* Optimize: check if the element is too large or the list
              * becomes too long *before* executing zzlInsert. */
             zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+			/* 检测是否需要转换集合的实现方式为hashtable + skiplist */
             if (zzlLength(zobj->ptr) > server.zset_max_ziplist_entries ||
                 sdslen(ele) > server.zset_max_ziplist_value)
                 zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
@@ -1393,6 +1438,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
 
             /* Remove and re-insert when score changes. */
             if (score != curscore) {
+				/* 更新skiplist 和 dict */
                 znode = zslUpdateScore(zs->zsl,curscore,ele,score);
                 /* Note that we did not removed the original element from
                  * the hash table representing the sorted set, so we just
@@ -1402,6 +1448,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             }
             return 1;
         } else if (!xx) {
+			/* 同时向skiplist 和 dict 插入，并且ele在skiplist和dict只保存一份 */
             ele = sdsdup(ele);
             znode = zslInsert(zs->zsl,score,ele);
             serverAssert(dictAdd(zs->dict,ele,&znode->score) == DICT_OK);
@@ -1527,8 +1574,8 @@ long zsetRank(robj *zobj, sds ele, int reverse) {
 /*-----------------------------------------------------------------------------
  * Sorted set commands
  *----------------------------------------------------------------------------*/
-
 /* This generic command implements both ZADD and ZINCRBY. */
+/* 用来实现 ZADD 和 ZINCRBY 命令*/
 void zaddGenericCommand(client *c, int flags) {
     static char *nanerr = "resulting score is not a number (NaN)";
     robj *key = c->argv[1];
@@ -1599,11 +1646,14 @@ void zaddGenericCommand(client *c, int flags) {
     zobj = lookupKeyWrite(c->db,key);
     if (zobj == NULL) {
         if (xx) goto reply_to_client; /* No key + XX option: nothing to do. */
+		/* 根据不同的情况使用不同的数据结构 */
         if (server.zset_max_ziplist_entries == 0 ||
             server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr))
         {
+			/* 使用skiplist实现 */
             zobj = createZsetObject();
         } else {
+			/* 使用ziplist实现 */
             zobj = createZsetZiplistObject();
         }
         dbAdd(c->db,key,zobj);

@@ -276,6 +276,7 @@ robj *createZsetObject(void) {
     robj *o;
 
     zs->dict = dictCreate(&zsetDictType,NULL);
+	/* 创建skiplist */
     zs->zsl = zslCreate();
     o = createObject(OBJ_ZSET,zs);
     o->encoding = OBJ_ENCODING_SKIPLIST;
