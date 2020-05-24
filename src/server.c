@@ -4643,6 +4643,9 @@ void daemonize(void) {
     int fd;
 
     if (fork() != 0) exit(0); /* parent exits */
+
+	/* 子进程创建一个新的session，并且是这个seesion里面唯一的进程，
+	 * 初始的session没有任何控制终端 */
     setsid(); /* create a new session */
 
     /* Every output goes to /dev/null. If Redis is daemonized but
