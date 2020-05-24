@@ -934,6 +934,9 @@ void sdsfreesplitres(sds *tokens, int count) {
  *
  * After the call, the modified sds string is no longer valid and all the
  * references must be substituted with the new pointer returned by the call. */
+/* 对p中的特殊字符，进行转义，比如原来的换行符\n，转换为\\n，
+ * 如果十六进制也转换，比如\xff，转换为\\xff
+ * 并且追加到s中 */
 sds sdscatrepr(sds s, const char *p, size_t len) {
     s = sdscatlen(s,"\"",1);
     while(len--) {
@@ -1009,6 +1012,11 @@ int hex_digit_to_int(char c) {
  * quotes or closed quotes followed by non space characters
  * as in: "foo"bar or "foo'
  */
+/*
+ * 把一个字符串分割为多个参数，这些参数使用空格、\n、\r、\t \0来个分割，
+ * 并且支持参数通过双引号或者单引号字符来包含分割符，类似REPL，
+ * 参数argc保存参数的个数，其结果保存在sds数组中返回
+ */
 sds *sdssplitargs(const char *line, int *argc) {
     const char *p = line;
     char *current = NULL;
@@ -1027,10 +1035,13 @@ sds *sdssplitargs(const char *line, int *argc) {
             if (current == NULL) current = sdsempty();
             while(!done) {
                 if (inq) {
+					/* 在双引号"" 内解析 */
                     if (*p == '\\' && *(p+1) == 'x' &&
                                              is_hex_digit(*(p+2)) &&
                                              is_hex_digit(*(p+3)))
                     {
+						/* 处理双引号中十六进制数字 */
+						/* 把对应的十六进制数字转换为十进制保存 */
                         unsigned char byte;
 
                         byte = (hex_digit_to_int(*(p+2))*16)+
@@ -1040,6 +1051,7 @@ sds *sdssplitargs(const char *line, int *argc) {
                     } else if (*p == '\\' && *(p+1)) {
                         char c;
 
+						/* 处理双引号中特殊字符 */
                         p++;
                         switch(*p) {
                         case 'n': c = '\n'; break;
@@ -1053,9 +1065,12 @@ sds *sdssplitargs(const char *line, int *argc) {
                     } else if (*p == '"') {
                         /* closing quote must be followed by a space or
                          * nothing at all. */
+						/* 双引号结束后面，必须是空格类字符，比如' ' '\n'等字符
+						 * 表示这个参数结束了 */
                         if (*(p+1) && !isspace(*(p+1))) goto err;
                         done=1;
                     } else if (!*p) {
+						/* 提前结束了，没有匹配的双引号，则错误 */
                         /* unterminated quotes */
                         goto err;
                     } else {
@@ -1063,14 +1078,17 @@ sds *sdssplitargs(const char *line, int *argc) {
                     }
                 } else if (insq) {
                     if (*p == '\\' && *(p+1) == '\'') {
+						/* 单引号内\' */
                         p++;
                         current = sdscatlen(current,"'",1);
                     } else if (*p == '\'') {
                         /* closing quote must be followed by a space or
                          * nothing at all. */
+						/* 单引号结束，表示当前参数解析结束了 */
                         if (*(p+1) && !isspace(*(p+1))) goto err;
                         done=1;
                     } else if (!*p) {
+						/* 提前结束了，没有匹配的单引号，则错误 */
                         /* unterminated quotes */
                         goto err;
                     } else {
@@ -1083,6 +1101,7 @@ sds *sdssplitargs(const char *line, int *argc) {
                     case '\r':
                     case '\t':
                     case '\0':
+					/* 表示当前参数结束了 */
                         done=1;
                         break;
                     case '"':

@@ -120,6 +120,7 @@ clientBufferLimitsConfig clientBufferLimitsDefaults[CLIENT_TYPE_OBUF_COUNT] = {
 /* Configuration values that require no special handling to set, get, load or
  * rewrite. */
 typedef struct boolConfigData {
+	/* 即指向全局变量server中成员，这个成员保存相应的配置 */
     int *config; /* The pointer to the server config this value is stored in */
     const int default_value; /* The default value of the config on rewrite */
     int (*is_valid_fn)(int val, char **err); /* Optional function to check validity of new value (generic doc above) */
@@ -178,6 +179,7 @@ typedef struct numericConfigData {
     int (*update_fn)(long long val, long long prev, char **err); /* Optional function to apply new value at runtime (generic doc above) */
 } numericConfigData;
 
+/* 保存实质配置的数据的结构体，可以保存不同类型的配置 */
 typedef union typeData {
     boolConfigData yesno;
     stringConfigData string;
@@ -198,14 +200,21 @@ typedef struct typeInterface {
     void (*rewrite)(typeData data, const char *name, struct rewriteConfigState *state);
 } typeInterface;
 
+/* 用一个结构体来管理一个配置成员，通过结构体各类成员，
+ * 可以初始化、获取和修改配置的值 */
 typedef struct standardConfig {
     const char *name; /* The user visible name of this config */
+	/* 别名的意思是，在配置文件也可以使用这个命令来配置 */
     const char *alias; /* An alias that can also be used for this config */
+
+	/* 配置能否通过CONFIG SET命令，值为IMMUTABLE_CONFIG和MODIFIABLE_CONFIG */
     const int modifiable; /* Can this value be updated by CONFIG SET? */
+	/* interface成员通过 embedConfigInterface来初始化的，设置操作这个配置的各类回调函数 */
     typeInterface interface; /* The function pointers that define the type interface */
     typeData data; /* The type specific data exposed used by the interface */
 } standardConfig;
 
+/* 这个全局变量保存配置，都是可以通过通用的接口读取和设置配置*/
 standardConfig configs[];
 
 /*-----------------------------------------------------------------------------
@@ -279,12 +288,18 @@ void queueLoadModule(sds path, sds *argv, int argc) {
     listAddNodeTail(server.loadmodule_queue,loadmod);
 }
 
+/* 
+ * 服务器启动时候调用，通过接口initServerConfig调用，其主要作用就是把全局变量configs中配置的
+ * 默认值，赋值给相应的全局变量server中成员，这个成员用来保存相应的配置，
+ * 这里的init函数，就是类似boolConfigInit的函数
+ */
 void initConfigValues() {
     for (standardConfig *config = configs; config->name != NULL; config++) {
         config->interface.init(config->data);
     }
 }
 
+/* 配置保存在字符串config中 */
 void loadServerConfigFromString(char *config) {
     char *err = NULL;
     int linenum = 0, totlines, i;
@@ -294,6 +309,7 @@ void loadServerConfigFromString(char *config) {
     lines = sdssplitlen(config,strlen(config),"\n",1,&totlines);
 
     for (i = 0; i < totlines; i++) {
+		/* 逐行读取，因此后面的配置会覆盖前面的配置 */
         sds *argv;
         int argc;
 
@@ -301,6 +317,7 @@ void loadServerConfigFromString(char *config) {
         lines[i] = sdstrim(lines[i]," \t\r\n");
 
         /* Skip comments and blank lines */
+		/* 跳过注释 */
         if (lines[i][0] == '#' || lines[i][0] == '\0') continue;
 
         /* Split into arguments */
@@ -323,6 +340,8 @@ void loadServerConfigFromString(char *config) {
             if ((!strcasecmp(argv[0],config->name) ||
                 (config->alias && !strcasecmp(argv[0],config->alias))))
             {
+				/* 配置文件中配置，是服务器需要的配置(即全局变量configs中配置的)，读取相应的数据，
+				 * 放到相应的server成员中，这里调用的实质就是类似boolConfigLoad文件 */
                 if (!config->interface.load(config->data, argv, argc, &err)) {
                     goto loaderr;
                 }
@@ -332,12 +351,15 @@ void loadServerConfigFromString(char *config) {
             }
         }
 
+		/* 使用通用的逻辑接口，比如stringConfigLoad即可设置相应的配置 */
         if (match) {
             sdsfreesplitres(argv,argc);
             continue;
         }
 
         /* Execute config directives */
+		/* 执行特殊配置的逻辑，不能通过通用的接口解析配置参数的逻辑，
+		 * 即不在全局变量configs中配置的 */
         if (!strcasecmp(argv[0],"bind") && argc >= 2) {
             int j, addresses = argc-1;
 
@@ -524,11 +546,14 @@ loaderr:
  * empty. This way loadServerConfig can be used to just load a file or
  * just load a string. */
 
-/* 参数options有的话，会在filename基础上增加额外的配置 */
+/*
+ * 从配置文件filename中读取配置，
+ * 参数options有的话，会在filename基础上增加额外的配置 */
 void loadServerConfig(char *filename, char *options) {
     sds config = sdsempty();
     char buf[CONFIG_MAX_LINE+1];
 
+	/* 从配置文件中读取内容，作为字符串最后调用接口loadServerConfigFromString */
     /* Load the file content */
     if (filename) {
         FILE *fp;
@@ -1601,6 +1626,9 @@ static void boolConfigRewrite(typeData data, const char *name, struct rewriteCon
     rewriteConfigYesNoOption(state, name,*(data.yesno.config), data.yesno.default_value);
 }
 
+/*
+ * 类似createBoolConfig的宏，实质就是构造一个结构体standardConfig，初始化其各个成员
+ */
 #define createBoolConfig(name, alias, modifiable, config_addr, default, is_valid, update) { \
     embedCommonConfig(name, alias, modifiable) \
     embedConfigInterface(boolConfigInit, boolConfigLoad, boolConfigSet, boolConfigGet, boolConfigRewrite) \
@@ -2282,6 +2310,7 @@ standardConfig configs[] = {
  * CONFIG command entry point
  *----------------------------------------------------------------------------*/
 
+/* config 命令响应函数 */
 void configCommand(client *c) {
     /* Only allow CONFIG GET while loading. */
     if (server.loading && strcasecmp(c->argv[1]->ptr,"get")) {
