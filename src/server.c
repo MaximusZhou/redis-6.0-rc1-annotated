@@ -5001,7 +5001,7 @@ int main(int argc, char **argv) {
 #endif
     setlocale(LC_COLLATE,"");  /* 字符编码相关，有本地环境变量默认值 */
     tzset(); /* Populates 'timezone' global. */
-    zmalloc_set_oom_handler(redisOutOfMemoryHandler);  /* 设置oom的回调函数 */
+    zmalloc_set_oom_handler(redisOutOfMemoryHandler);  /* 设置oom的回调函数，即分配内存失败的时候的回调函数 */
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
 
@@ -5062,6 +5062,7 @@ int main(int argc, char **argv) {
         }
 
         /* First argument is the config file name? */
+		/* 第一个参数是配置文件路径，读取配置文件路径 */
         if (argv[j][0] != '-' || argv[j][1] != '-') {
             configfile = argv[j];
             server.configfile = getAbsolutePath(configfile);
@@ -5076,6 +5077,10 @@ int main(int argc, char **argv) {
          * configuration file. For instance --port 6380 will generate the
          * string "port 6380\n" to be parsed after the actual file name
          * is parsed, if any. */
+		/*
+		 * 读取其他选项，即--开始的选项，比如--port 6380，被解析为port 6380，
+		 * 并且这些额外的配置，会覆盖在配置中的配置
+		 */
         while(j != argc) {
             if (argv[j][0] == '-' && argv[j][1] == '-') {
                 /* Option name */
@@ -5084,11 +5089,13 @@ int main(int argc, char **argv) {
                     j++;
                     continue;
                 }
+				/* 选项名字，以--开头，去掉-- */
                 if (sdslen(options)) options = sdscat(options,"\n");
                 options = sdscat(options,argv[j]+2);
                 options = sdscat(options," ");
             } else {
                 /* Option argument */
+				/* 增加选项的参数 */
                 options = sdscatrepr(options,argv[j],strlen(argv[j]));
                 options = sdscat(options," ");
             }
