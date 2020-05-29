@@ -38,8 +38,8 @@ typedef struct connection connection;
 
 typedef enum {
     CONN_STATE_NONE = 0,
-    CONN_STATE_CONNECTING,
-    CONN_STATE_ACCEPTING,
+    CONN_STATE_CONNECTING, /* 这个状态用在请求连接的一方 即client方，客户端connect成功返回后，初始状态*/
+    CONN_STATE_ACCEPTING, /* 这个状态用在监听连接的一方 即server方，当前accept一个连接后，这个连接初始状态 */
     CONN_STATE_CONNECTED,
     CONN_STATE_CLOSED,
     CONN_STATE_ERROR

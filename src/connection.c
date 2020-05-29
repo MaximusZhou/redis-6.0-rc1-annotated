@@ -223,7 +223,7 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
     return ret;
 }
 
-/* 接收连接的，最后一步调用这个接口，执行相应的回调函数 */
+/* 接收连接的，最后一步调用这个接口，执行相应的回调函数，调用这个接口时候，相应的网络连接已经创建好了 */
 static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_handler) {
     if (conn->state != CONN_STATE_ACCEPTING) return C_ERR;
     conn->state = CONN_STATE_CONNECTED;

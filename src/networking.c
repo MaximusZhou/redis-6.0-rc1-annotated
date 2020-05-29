@@ -1269,7 +1269,7 @@ client *lookupClientByID(uint64_t id) {
  * 如果客户端被释放了，则返回C_ERR，比如客户端调用这个接口前，flag被设置了CLIENT_CLOSE_AFTER_REPLY.
  * 参数handler_installed的意思，是否通过触发事件回调函数来调用的，如果是，则传入1，
  * 即接口 sendReplyToClient 调用的，其他情况（直接尝试发送或者io线程）都是传入0,
- * handler_installed传入1的时候，如果数据发送完成，设置相应客户端可写事件监控和回调函数
+ * handler_installed传入1的时候，如果数据发送完成，设置取消相应客户端可写事件监控和回调函数
  */
 int writeToClient(client *c, int handler_installed) {
     ssize_t nwritten = 0, totwritten = 0;
@@ -1974,6 +1974,7 @@ void readQueryFromClient(connection *conn) {
         }
     } else if (nread == 0) {
         serverLog(LL_VERBOSE, "Client closed connection");
+		/* 客户端主动关闭连接了 */
         freeClientAsync(c);
         return;
     } else if (c->flags & CLIENT_MASTER) {
