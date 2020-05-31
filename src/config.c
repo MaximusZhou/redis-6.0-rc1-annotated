@@ -409,6 +409,7 @@ void loadServerConfigFromString(char *config) {
                 fclose(logfp);
             }
         } else if (!strcasecmp(argv[0],"include") && argc == 2) {
+			/* 用递归的时候，实现include配置文件 */
             loadServerConfig(argv[1],NULL);
         } else if ((!strcasecmp(argv[0],"client-query-buffer-limit")) && argc == 2) {
              server.client_max_querybuf_len = memtoll(argv[1],NULL);
